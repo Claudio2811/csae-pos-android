@@ -4,29 +4,35 @@ import androidx.compose.runtime.*
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import cl.csae.pos.di.ServiceLocator
 import cl.csae.pos.model.Ticket
 import cl.csae.pos.model.UsuarioPos
 import cl.csae.pos.ui.screens.DashboardScreen
 import cl.csae.pos.ui.screens.LoginScreen
 import cl.csae.pos.ui.screens.POSScreen
 import cl.csae.pos.ui.screens.TicketScreen
+import kotlinx.coroutines.launch
 
 object Routes {
     const val LOGIN = "login"
     const val DASHBOARD = "dashboard"
     const val POS = "pos"
-    const val TICKET = "ticket/{numero}/{comensalId}/{servicioId}"
-    fun ticket(numero: String, comensalId: String, servicioId: String) = "ticket/$numero/$comensalId/$servicioId"
+    const val TICKET = "ticket/{numero}"
+    fun ticket(numero: String) = "ticket/$numero"
 }
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 @Composable
 fun CsaeNavHost() {
     val nav = rememberNavController()
-    // remember (no rememberSaveable) porque UsuarioPos no es Parcelable y no
-    // vale la pena agregar el codigo del Saver para un POS donde la rotacion
-    // de pantalla no deberia pasar.
+    val scope = rememberCoroutineScope()
+    // remember (no rememberSaveable) porque UsuarioPos no es Parcelable y el
+    // POS se mantiene en portrait: la rotacion no deberia pasar.
     var usuario by remember { mutableStateOf<UsuarioPos?>(null) }
     var kiosko by remember { mutableStateOf(false) }
+    // Ultimo ticket generado en el turno: vive en el cache del TicketCacheRepository,
+    // pero necesitamos navegar a el pasando solo el numero. Lo recuperamos desde ahi.
+    var ultimoTicketNumero by remember { mutableStateOf<String?>(null) }
 
     NavHost(navController = nav, startDestination = Routes.LOGIN) {
         composable(Routes.LOGIN) {
@@ -42,6 +48,10 @@ fun CsaeNavHost() {
             DashboardScreen(
                 usuario = u,
                 onLogout = {
+                    scope.launch {
+                        ServiceLocator.authRepo.logout()
+                        ServiceLocator.resetSession()
+                    }
                     usuario = null
                     nav.navigate(Routes.LOGIN) {
                         popUpTo(0) { inclusive = true }
@@ -56,28 +66,20 @@ fun CsaeNavHost() {
                 usuario = u,
                 onBack = { nav.popBackStack() },
                 onTicketGenerado = { t ->
-                    nav.navigate(Routes.ticket(t.numero, t.comensal.id, t.servicio.id))
+                    ultimoTicketNumero = t.numero
+                    nav.navigate(Routes.ticket(t.numero))
                 },
             )
         }
         composable(Routes.TICKET) { entry ->
             val args = entry.arguments ?: return@composable
             val numero = args.getString("numero") ?: return@composable
-            val comensalId = args.getString("comensalId") ?: return@composable
-            val servicioId = args.getString("servicioId") ?: return@composable
-
-            val comensal = cl.csae.pos.data.MockRepository.listarComensales()
-                .firstOrNull { it.id == comensalId } ?: return@composable
-            val servicio = comensal.serviciosHoy.firstOrNull { it.id == servicioId } ?: return@composable
             val u = usuario ?: return@composable
-            val ticket = Ticket(
-                numero = numero,
-                comensal = comensal,
-                servicio = servicio,
-                fechaHora = java.text.SimpleDateFormat("dd-MM-yyyy HH:mm", java.util.Locale("es", "CL"))
-                    .format(java.util.Date()),
-                operador = u.displayName,
-            )
+            // Recuperamos el ticket del cache. Si no esta (caso raro: app
+            // se reincio en medio del flujo), volvemos al POS.
+            val ticket: Ticket = ServiceLocator.ticketCache.tickets.value
+                .firstOrNull { it.numero == numero }
+                ?: return@composable
             TicketScreen(
                 ticket = ticket,
                 esKiosko = kiosko,

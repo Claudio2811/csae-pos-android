@@ -1,6 +1,5 @@
 package cl.csae.pos.ui.screens
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -14,19 +13,20 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import cl.csae.pos.data.MockRepository
+import cl.csae.pos.data.repository.TicketCacheRepository
+import cl.csae.pos.di.ServiceLocator
 import cl.csae.pos.model.Kpi
 import cl.csae.pos.model.UsuarioPos
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import kotlinx.coroutines.launch
 
 /**
  * Dashboard principal. Arriba un saludo + boton "Generar ticket" grande.
- * Abajo KPIs en grid + lista de los ultimos tickets del dia.
+ * Abajo KPIs en grid + lista de los ultimos tickets del turno.
+ *
+ * Sprint 3.1.2: los KPIs se calculan desde el [TicketCacheRepository] (los
+ * tickets generados en este turno). El boton de refresco re-baja el catalog.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -35,10 +35,19 @@ fun DashboardScreen(
     onLogout: () -> Unit,
     onIrPos: () -> Unit,
 ) {
-    var tickRefresco by remember { mutableStateOf(0) }
-    val kpis = remember(tickRefresco) { MockRepository.kpis() }
-    val tickets = remember(tickRefresco) { MockRepository.ticketsHoy() }
-    val hora = remember { SimpleDateFormat("EEEE d 'de' MMMM, HH:mm", Locale("es", "CL")).format(Date()) }
+    val tickets by ServiceLocator.ticketCache.tickets.collectAsState()
+    val scope = rememberCoroutineScope()
+    var refreshing by remember { mutableStateOf(false) }
+    var refreshError by remember { mutableStateOf<String?>(null) }
+
+    val kpis = remember(tickets) {
+        listOf(
+            Kpi("Tickets hoy",   tickets.size.toString(),                "🎫"),
+            Kpi("Monto total",   "$${ServiceLocator.ticketCache.montoTotalClp()}", "💰"),
+            Kpi("Comensales unicos", ServiceLocator.ticketCache.comensalesUnicos().toString(), "👥"),
+            Kpi("Servicios disponibles", ServiceLocator.catalogRepo.getCached()?.servicios?.size?.toString() ?: "-", "🍽"),
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -46,12 +55,34 @@ fun DashboardScreen(
                 title = {
                     Column {
                         Text("Hola, ${usuario.displayName}", style = MaterialTheme.typography.titleMedium)
-                        Text(hora, style = MaterialTheme.typography.bodySmall)
+                        Text(
+                            "${usuario.rol}${usuario.restauranteId?.let { " - $it" } ?: ""}",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
                     }
                 },
                 actions = {
-                    IconButton(onClick = { tickRefresco++ }) {
-                        Icon(Icons.Filled.Refresh, contentDescription = "Refrescar")
+                    IconButton(
+                        onClick = {
+                            if (refreshing) return@IconButton
+                            refreshing = true
+                            refreshError = null
+                            scope.launch {
+                                val r = ServiceLocator.catalogRepo.refresh()
+                                refreshing = false
+                                r.onFailure { refreshError = it.message ?: "Error re-bajando catalog." }
+                            }
+                        },
+                    ) {
+                        if (refreshing) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                strokeWidth = 2.dp,
+                            )
+                        } else {
+                            Icon(Icons.Filled.Refresh, contentDescription = "Refrescar catalog")
+                        }
                     }
                     IconButton(onClick = onLogout) {
                         Icon(Icons.Filled.ExitToApp, contentDescription = "Cerrar sesion")
@@ -82,7 +113,18 @@ fun DashboardScreen(
                 Text("GENERAR TICKET", fontSize = 24.sp, fontWeight = FontWeight.Bold)
             }
 
-            Text("Hoy", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+            if (refreshError != null) {
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                    Text(
+                        refreshError!!,
+                        modifier = Modifier.padding(12.dp),
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+
+            Text("Turno actual", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
 
             // KPIs grid
             LazyVerticalGrid(
@@ -108,9 +150,19 @@ fun DashboardScreen(
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                         ) {
                             Column(modifier = Modifier.padding(12.dp)) {
-                                Text(t.comensal.nombre + " " + (t.comensal.apellido ?: ""), fontWeight = FontWeight.SemiBold)
-                                Text("${t.servicio.nombre} - $${t.servicio.precio}", style = MaterialTheme.typography.bodySmall)
-                                Text(t.fechaHora, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                                Text(
+                                    "${t.comensal.nombre} ${t.comensal.apellido ?: ""}".trim(),
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                Text(
+                                    "${t.servicio.nombre} - $${t.servicio.precio}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                                Text(
+                                    t.fechaHora,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                )
                             }
                         }
                     }

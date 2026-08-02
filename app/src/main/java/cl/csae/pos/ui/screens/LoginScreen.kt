@@ -19,27 +19,57 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import cl.csae.pos.data.MockRepository
+import cl.csae.pos.di.ServiceLocator
 import cl.csae.pos.model.UsuarioPos
+import kotlinx.coroutines.launch
 
 /**
- * Pantalla de login. Usuarios demo (ver MockRepository.login):
- *   - operador / demo123
- *   - admin / admin123
+ * Pantalla de login. Sprint 3.1.2: contra la API real de CSAE.
+ *
+ * El operador ingresa su email + contrasena. El `AuthRepository` llama a
+ * `POST /api/v1/auth/login` y guarda el JWT en DataStore si es OK.
+ *
+ * Despues del login se dispara `catalogRepo.refresh()` para bajar el catalog
+ * completo (empresas, servicios, comensales) que se usara en el POS.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LoginScreen(onLoginOk: (UsuarioPos) -> Unit) {
-    var username by remember { mutableStateOf("operador") }
-    var password by remember { mutableStateOf("demo123") }
+    var email by remember { mutableStateOf("admin@casino-demo.cl") }
+    var password by remember { mutableStateOf("Demo123!") }
     var showPassword by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(false) }
     val focus = remember { FocusRequester() }
+    val scope = rememberCoroutineScope()
 
     fun submit() {
-        val u = MockRepository.login(username, password)
-        if (u == null) error = "Usuario o contrasena invalidos."
-        else onLoginOk(u)
+        if (loading) return
+        if (email.isBlank() || password.isBlank()) {
+            error = "Ingresa email y contrasena."
+            return
+        }
+        loading = true
+        error = null
+        scope.launch {
+            val result = ServiceLocator.authRepo.login(email.trim(), password)
+            result
+                .onSuccess { usuario ->
+                    // Bajar el catalog en background (no bloquea el login).
+                    // Si falla, el POS mostrara un error al buscar comensal.
+                    val cat = ServiceLocator.catalogRepo.refresh()
+                    if (cat.isFailure) {
+                        // No bloqueamos el login por esto: el operador puede ir al POS
+                        // y reintentar la descarga desde ahi.
+                    }
+                    loading = false
+                    onLoginOk(usuario)
+                }
+                .onFailure { e ->
+                    loading = false
+                    error = e.message ?: "No se pudo iniciar sesion."
+                }
+        }
     }
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.primary) {
@@ -74,13 +104,14 @@ fun LoginScreen(onLoginOk: (UsuarioPos) -> Unit) {
                     Text("Iniciar sesion", style = MaterialTheme.typography.headlineSmall)
 
                     OutlinedTextField(
-                        value = username,
-                        onValueChange = { username = it; error = null },
-                        label = { Text("Usuario") },
+                        value = email,
+                        onValueChange = { email = it; error = null },
+                        label = { Text("Email") },
                         singleLine = true,
+                        enabled = !loading,
                         modifier = Modifier.fillMaxWidth().focusRequester(focus),
                         keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Text,
+                            keyboardType = KeyboardType.Email,
                             imeAction = ImeAction.Next,
                         ),
                     )
@@ -90,6 +121,7 @@ fun LoginScreen(onLoginOk: (UsuarioPos) -> Unit) {
                         onValueChange = { password = it; error = null },
                         label = { Text("Contrasena") },
                         singleLine = true,
+                        enabled = !loading,
                         modifier = Modifier.fillMaxWidth(),
                         visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(
@@ -108,18 +140,33 @@ fun LoginScreen(onLoginOk: (UsuarioPos) -> Unit) {
                     )
 
                     if (error != null) {
-                        Text(error!!, color = MaterialTheme.colorScheme.error)
+                        Text(
+                            error!!,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
                     }
 
                     Button(
                         onClick = { submit() },
+                        enabled = !loading,
                         modifier = Modifier.fillMaxWidth().height(56.dp),
                     ) {
-                        Text("Entrar", fontSize = 18.sp)
+                        if (loading) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(24.dp),
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                strokeWidth = 2.dp,
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Text("Conectando...", fontSize = 16.sp)
+                        } else {
+                            Text("Entrar", fontSize = 18.sp)
+                        }
                     }
 
                     Text(
-                        text = "Demo: operador/demo123  o  admin/admin123",
+                        text = "Demo Casino: admin@casino-demo.cl / Demo123!",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                     )

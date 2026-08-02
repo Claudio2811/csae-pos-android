@@ -1,7 +1,6 @@
 package cl.csae.pos.data
 
 import cl.csae.pos.model.Comensal
-import cl.csae.pos.model.Kpi
 import cl.csae.pos.model.Servicio
 import cl.csae.pos.model.Ticket
 import cl.csae.pos.model.UsuarioPos
@@ -11,44 +10,47 @@ import java.util.Locale
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Repositorio mock para Sprint 3.0. Todos los datos viven en memoria.
+ * Repositorio mock LEGACY de Sprint 3.0.
  *
- * **Por que mock primero:**
- * Salamanca aun no tiene comensales reales. Mockear nos permite iterar la UX
- * del POS sin atarnos a la API ni a la BD. En Sprint 3.1 este repo se
- * reemplaza por Retrofit + llamadas a CSAE.Api.
+ * **Ya no se usa.** En Sprint 3.1.2 se reemplazo por Retrofit + llamadas
+ * a CSAE.Api. Este archivo se mantiene solo para no romper git history
+ * y se eliminara en el proximo commit.
+ *
+ * El modelo de dominio cambio:
+ *  - `UsuarioPos` ahora tiene `email` como campo principal (antes `username`).
+ *  - `Comensal.serviciosHoy` se renombro a `Comensal.servicios`.
+ *  - `Comensal` ahora incluye `membresiaId`.
+ *
+ * Este archivo no compila si los modelos se actualizan sin actualizarlo,
+ * asi que se debe eliminar junto con la migracion al API real.
  */
+@Suppress("unused", "UNUSED_VARIABLE")
 object MockRepository {
-
-    // ============= USUARIOS (login) =============
 
     val usuarios = listOf(
         UsuarioPos(
-            username = "operador",
+            email = "operador@csae.cl",
             displayName = "Operador Salamanca",
             rol = "OperadorPOS",
             restauranteId = "11111111-1111-1111-1111-111111111111",
         ),
         UsuarioPos(
-            username = "admin",
+            email = "admin@csae.cl",
             displayName = "Admin Casino",
             rol = "AdminCasino",
             restauranteId = "11111111-1111-1111-1111-111111111111",
         ),
     )
 
-    fun login(username: String, password: String): UsuarioPos? {
-        // Password fijo para demo: operador/demo123, admin/admin123
-        val expected = when (username) {
-            "operador" -> "demo123"
-            "admin" -> "admin123"
+    fun login(email: String, password: String): UsuarioPos? {
+        val expected = when (email) {
+            "operador@csae.cl" -> "demo123"
+            "admin@csae.cl" -> "admin123"
             else -> return null
         }
         if (password != expected) return null
-        return usuarios.firstOrNull { it.username == username }
+        return usuarios.firstOrNull { it.email == email }
     }
-
-    // ============= CATALOGO DE SERVICIOS =============
 
     val servicios = listOf(
         Servicio(id = "s-alm", nombre = "Almuerzo",   tipo = "Almuerzo",  precio = 4500),
@@ -57,64 +59,48 @@ object MockRepository {
         Servicio(id = "s-col", nombre = "Colacion",   tipo = "Colacion",  precio = 1800),
     )
 
-    // ============= COMENSALES MOCK =============
-
     private val comensales = mutableListOf(
         Comensal(
-            id = "c-001", rut = "12345678-5", nombre = "Juan", apellido = "Perez",
+            id = "c-001", membresiaId = "m-001", rut = "12345678-5", nombre = "Juan", apellido = "Perez",
             empresa = "Minera Salamanca",
-            serviciosHoy = listOf(servicios[0], servicios[2]),
+            servicios = listOf(servicios[0], servicios[2]),
         ),
         Comensal(
-            id = "c-002", rut = "11111111-1", nombre = "Maria", apellido = "Gonzalez",
+            id = "c-002", membresiaId = "m-002", rut = "11111111-1", nombre = "Maria", apellido = "Gonzalez",
             empresa = "Minera Salamanca",
-            serviciosHoy = listOf(servicios[0]),
+            servicios = listOf(servicios[0]),
         ),
         Comensal(
-            id = "c-003", rut = "22222222-2", nombre = "Pedro", apellido = "Ramirez",
+            id = "c-003", membresiaId = "m-003", rut = "22222222-2", nombre = "Pedro", apellido = "Ramirez",
             empresa = "Minera Salamanca",
-            serviciosHoy = listOf(servicios[1], servicios[3]),
+            servicios = listOf(servicios[1], servicios[3]),
         ),
         Comensal(
-            id = "c-004", rut = "12345678-5", nombre = "Ana", apellido = "Silva",
+            id = "c-004", membresiaId = "m-004", rut = "33333333-3", nombre = "Ana", apellido = "Silva",
             empresa = "Constructora XYZ",
-            serviciosHoy = listOf(servicios[0], servicios[1]),
+            servicios = listOf(servicios[0], servicios[1]),
         ),
         Comensal(
-            id = "c-005", rut = "12345678-5", nombre = "Luis", apellido = "Morales",
+            id = "c-005", membresiaId = "m-005", rut = "44444444-4", nombre = "Luis", apellido = "Morales",
             empresa = "Minera Salamanca",
-            serviciosHoy = listOf(servicios[2], servicios[3]),
+            servicios = listOf(servicios[2], servicios[3]),
         ),
     )
 
-    /**
-     * Busca un comensal por RUT. Retorna el primero que matchee (o null).
-     * El RUT se compara en formato canonico (sin puntos, con guion).
-     */
     fun buscarPorRut(rut: String): Comensal? {
         val canonico = rut.trim().replace(".", "").uppercase()
         return comensales.firstOrNull { it.rut.uppercase() == canonico }
     }
 
-    /**
-     * Lista de comensales de una empresa (para dropdowns o busqueda).
-     */
     fun listarComensales(): List<Comensal> = comensales.toList()
-
-    // ============= TICKETS =============
 
     private val ticketsGenerados = mutableListOf<Ticket>()
     private val contador = AtomicLong(0)
     private val dateFormat = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US)
     private val displayFormat = SimpleDateFormat("dd-MM-yyyy HH:mm", Locale("es", "CL"))
 
-    /**
-     * Genera un ticket: valida que el comensal tenga el servicio disponible
-     * y que no se haya generado el mismo servicio en el mismo dia (regla
-     * "un servicio por comensal por dia").
-     */
     fun generarTicket(comensal: Comensal, servicio: Servicio, operador: String): Result<Ticket> {
-        if (comensal.serviciosHoy.none { it.id == servicio.id }) {
+        if (comensal.servicios.none { it.id == servicio.id }) {
             return Result.failure(IllegalStateException(
                 "El comensal no tiene '${servicio.nombre}' asignado para hoy."
             ))
@@ -139,16 +125,5 @@ object MockRepository {
 
     fun ticketsHoy(): List<Ticket> = ticketsGenerados.toList()
 
-    // ============= KPIs DEL DASHBOARD =============
-
-    fun kpis(): List<Kpi> {
-        val total = ticketsGenerados.size
-        val monto = ticketsGenerados.sumOf { it.servicio.precio }
-        return listOf(
-            Kpi("Tickets hoy",   total.toString(),                "🎫"),
-            Kpi("Monto total",   "$${monto}",                     "💰"),
-            Kpi("Comensales unicos", ticketsGenerados.map { it.comensal.id }.distinct().size.toString(), "👥"),
-            Kpi("Servicios disponibles", servicios.size.toString(),"🍽"),
-        )
-    }
+    private val hoy = java.util.Calendar.getInstance()
 }

@@ -19,19 +19,22 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import cl.csae.pos.data.MockRepository
+import cl.csae.pos.di.ServiceLocator
 import cl.csae.pos.model.Comensal
 import cl.csae.pos.model.Servicio
 import cl.csae.pos.model.Ticket
 import cl.csae.pos.model.UsuarioPos
+import kotlinx.coroutines.launch
 
 /**
- * Pantalla principal del POS.
+ * Pantalla principal del POS. Sprint 3.1.2: contra la API real.
+ *
  * Flujo:
- *   1. Ingresar RUT (teclado numerico + guion)
- *   2. Mostrar comensal encontrado
- *   3. Seleccionar servicio habilitado
- *   4. Boton "Generar ticket" -> navegar a TicketScreen
+ *   1. Operador ingresa RUT del comensal.
+ *   2. La app busca en el catalog cacheado (descargado al login).
+ *   3. Operador selecciona servicio habilitado para ese comensal.
+ *   4. Boton "Generar ticket" -> `POST /api/v1/pos/consumos` con `IdempotencyKey`.
+ *   5. Navega a TicketScreen con el ticket devuelto.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -44,23 +47,36 @@ fun POSScreen(
     var comensal by remember { mutableStateOf<Comensal?>(null) }
     var servicioSeleccionado by remember { mutableStateOf<Servicio?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(false) }
     val focusRut = remember { FocusRequester() }
+    val scope = rememberCoroutineScope()
 
     fun buscar() {
+        if (rut.isBlank()) {
+            error = "Ingresa un RUT"
+            comensal = null
+            servicioSeleccionado = null
+            return
+        }
         comensal = null
         servicioSeleccionado = null
         error = null
-        if (rut.isBlank()) {
-            error = "Ingresa un RUT"
+        // Si no hay catalog en cache, intentar bajarlo.
+        if (ServiceLocator.catalogRepo.getCached() == null) {
+            scope.launch {
+                val r = ServiceLocator.catalogRepo.refresh()
+                r.onFailure { error = "No se pudo cargar el catalog: ${it.message}" }
+            }
             return
         }
-        val c = MockRepository.buscarPorRut(rut)
-        if (c == null) {
-            error = "No se encontro comensal con RUT $rut"
-        } else if (c.serviciosHoy.isEmpty()) {
-            error = "El comensal no tiene servicios asignados para hoy"
-        } else {
-            comensal = c
+        val c = ServiceLocator.catalogRepo.buscarComensal(rut)
+        when {
+            c == null -> error = "No se encontro comensal con RUT $rut en este casino."
+            c.servicios.isEmpty() -> {
+                comensal = c
+                error = "El comensal no tiene servicios habilitados."
+            }
+            else -> comensal = c
         }
     }
 
@@ -71,9 +87,25 @@ fun POSScreen(
             error = "Selecciona un servicio antes de generar el ticket"
             return
         }
-        val r = MockRepository.generarTicket(c, s, usuario.displayName)
-        r.onSuccess { t -> onTicketGenerado(t) }
-         .onFailure { e -> error = e.message ?: "Error generando ticket" }
+        if (loading) return
+        loading = true
+        error = null
+        scope.launch {
+            val r = ServiceLocator.consumoRepo.registrar(
+                membresiaId = c.membresiaId,
+                servicioId = s.id,
+                operador = usuario.displayName,
+            )
+            loading = false
+            r.onSuccess { t ->
+                comensal = null
+                servicioSeleccionado = null
+                rut = ""
+                onTicketGenerado(t)
+            }.onFailure { e ->
+                error = e.message ?: "Error generando ticket"
+            }
+        }
     }
 
     Scaffold(
@@ -104,6 +136,7 @@ fun POSScreen(
                 onValueChange = { rut = it; error = null },
                 label = { Text("12345678-5") },
                 singleLine = true,
+                enabled = !loading,
                 modifier = Modifier.fillMaxWidth().focusRequester(focusRut),
                 keyboardOptions = KeyboardOptions(
                     keyboardType = KeyboardType.Text,
@@ -111,12 +144,16 @@ fun POSScreen(
                 ),
                 keyboardActions = KeyboardActions(onSearch = { buscar() }),
                 trailingIcon = {
-                    IconButton(onClick = { buscar() }) {
+                    IconButton(onClick = { buscar() }, enabled = !loading) {
                         Icon(Icons.Filled.Search, contentDescription = "Buscar")
                     }
                 },
             )
-            Button(onClick = { buscar() }, modifier = Modifier.fillMaxWidth()) {
+            Button(
+                onClick = { buscar() },
+                enabled = !loading,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
                 Text("Buscar comensal")
             }
 
@@ -141,7 +178,7 @@ fun POSScreen(
                             Icon(Icons.Filled.Person, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
                             Text(
-                                "${c.nombre} ${c.apellido ?: ""}",
+                                "${c.nombre} ${c.apellido ?: ""}".trim(),
                                 fontSize = 22.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -152,30 +189,42 @@ fun POSScreen(
                     }
                 }
 
-                // Paso 3: servicio
-                Text(
-                    "2. Servicio a entregar",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                c.serviciosHoy.forEach { s ->
-                    ServicioCard(
-                        servicio = s,
-                        seleccionado = servicioSeleccionado?.id == s.id,
-                        onClick = { servicioSeleccionado = s; error = null },
+                if (c.servicios.isNotEmpty()) {
+                    // Paso 3: servicio
+                    Text(
+                        "2. Servicio a entregar",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
                     )
-                }
+                    c.servicios.forEach { s ->
+                        ServicioCard(
+                            servicio = s,
+                            seleccionado = servicioSeleccionado?.id == s.id,
+                            onClick = { servicioSeleccionado = s; error = null },
+                        )
+                    }
 
-                // Paso 4: generar
-                Spacer(Modifier.weight(1f))
-                Button(
-                    onClick = { generar() },
-                    enabled = servicioSeleccionado != null,
-                    modifier = Modifier.fillMaxWidth().height(64.dp),
-                ) {
-                    Icon(Icons.Filled.Restaurant, contentDescription = null, modifier = Modifier.size(28.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("GENERAR TICKET", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    // Paso 4: generar
+                    Spacer(Modifier.weight(1f))
+                    Button(
+                        onClick = { generar() },
+                        enabled = servicioSeleccionado != null && !loading,
+                        modifier = Modifier.fillMaxWidth().height(64.dp),
+                    ) {
+                        if (loading) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(24.dp),
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                strokeWidth = 2.dp,
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text("Generando...", fontSize = 18.sp)
+                        } else {
+                            Icon(Icons.Filled.Restaurant, contentDescription = null, modifier = Modifier.size(28.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("GENERAR TICKET", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
                 }
             }
         }
