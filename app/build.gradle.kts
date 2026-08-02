@@ -8,14 +8,16 @@ plugins {
 
 android {
     namespace = "cl.csae.pos"
+    // SDK 36 = Android 16 (Baklava), ultima estable al 2026-08-02.
+    // Tambien tenemos SDK 36.1 (extension level 20) instalado pero se usa con compileSdkPreview.
     compileSdk = 36
 
     defaultConfig {
         applicationId = "cl.csae.pos"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2.0-api"
+        versionCode = 3
+        versionName = "0.3.0-sdk36"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
         // URL del API configurable por buildType.
