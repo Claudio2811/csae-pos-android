@@ -16,8 +16,8 @@ android {
         applicationId = "cl.csae.pos"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.3.0-sdk36"
+        versionCode = 4
+        versionName = "0.4.0-jdk21"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
         // URL del API configurable por buildType.
@@ -36,11 +36,13 @@ android {
     }
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        // JDK 21 = ultimo LTS al 2026-08-02. (JDK 25 existe pero no es LTS,
+        // y Kotlin 2.0.21 ya tiene issues parseandolo.)
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
     }
     kotlinOptions {
-        jvmTarget = "17"
+        jvmTarget = "21"
     }
     buildFeatures {
         compose = true
