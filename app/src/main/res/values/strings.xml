@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">CSAE POS</string>
+    <string name="kiosko_exit_code">salamanca_admin</string>
+</resources>
