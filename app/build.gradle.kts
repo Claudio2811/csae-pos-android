@@ -15,8 +15,8 @@ android {
         applicationId = "cl.csae.pos"
         minSdk = 26
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.5.0-latest"
+        versionCode = 6
+        versionName = "0.6.0-jdk21"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
         // URL del API configurable por buildType.
@@ -35,8 +35,8 @@ android {
     }
 
     compileOptions {
-        // JDK 21 = ultimo LTS maduro al 2026-08-02. Compatible con AGP 8.9+
-        // y Kotlin 2.1.20+. JDK 25 existe pero no es LTS.
+        // JDK 25 = ultimo estable al 2026-08-02 (sept 2025). No es LTS pero
+        // Kotlin 2.2.20+ lo soporta (jvmTarget 25, parse 25.0.x). Compatible con AGP 8.9+.
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
     }
@@ -97,3 +97,4 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
+
