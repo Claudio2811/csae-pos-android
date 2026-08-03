@@ -2,15 +2,17 @@ package cl.csae.pos.ui.screens
 
 import android.Manifest
 import android.bluetooth.BluetoothDevice
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Print
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -23,10 +25,14 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
+import cl.csae.pos.data.bluetooth.TicketPdfGenerator
 import cl.csae.pos.di.ServiceLocator
 import cl.csae.pos.model.Ticket
+import cl.csae.pos.ui.components.CambiarModoTopBar
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.io.File
 
 /**
  * Pantalla del ticket generado. Muestra el detalle (preview de lo que iria
@@ -47,7 +53,7 @@ fun TicketScreen(
     ticket: Ticket,
     esKiosko: Boolean,
     onNuevo: () -> Unit,
-    onVolver: () -> Unit,
+    onCambiarModo: () -> Unit = {},
 ) {
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -55,6 +61,9 @@ fun TicketScreen(
     var segundosParaSalir by remember { mutableStateOf(10) }
     var showPrinterDialog by remember { mutableStateOf(false) }
     var printing by remember { mutableStateOf(false) }
+    // Sprint 3.2.1: si la impresion fallo, guardamos el path del PDF generado
+    // para que el operador pueda abrirlo desde el Snackbar de accion.
+    var pdfFallbackPath by remember { mutableStateOf<String?>(null) }
 
     // Auto-volver en modo kiosko despues de 10s
     LaunchedEffect(esKiosko) {
@@ -94,18 +103,10 @@ fun TicketScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Ticket generado") },
-                navigationIcon = {
-                    IconButton(onClick = onVolver) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onPrimary,
-                ),
+            CambiarModoTopBar(
+                title = "Ticket generado",
+                subtitle = "N° ${ticket.numero}",
+                onCambiarModo = onCambiarModo,
             )
         },
         snackbarHost = { SnackbarHost(snackbar) },
@@ -233,19 +234,87 @@ fun TicketScreen(
                     // el ticket no tiene qrToken (tickets pre-Sprint-3.2).
                     val qrToken = ticket.qrToken
                         ?: "CSAE-${ticket.numero}-${ticket.comensal.rut}"
+                    // Regeneramos el QR para el PDF con sizePx fijo.
+                    val qrBitmap = ServiceLocator.printerService.generarQrBitmap(qrToken, sizePx = 512)
                     val r = ServiceLocator.printerService.imprimirTicketConQr(
                         deviceAddress = device.address,
                         ticket = ticket,
                         qrToken = qrToken,
                     )
-                    // Independientemente del resultado de la impresion fisica,
-                    // marcamos el ticket como impreso en el backend.
-                    ticket.ticketId?.let { id ->
-                        ServiceLocator.consumoRepo.marcarImpreso(id, device.address)
-                    }
                     printing = false
-                    r.onSuccess { snackbar.showSnackbar("Impreso OK en ${device.name ?: device.address}.") }
-                     .onFailure { snackbar.showSnackbar(it.message ?: "Error imprimiendo.") }
+                    r.onSuccess {
+                        // Marcamos el ticket como impreso SOLO si la impresion
+                        // fisica salio OK. Esto evita estados inconsistentes.
+                        ticket.ticketId?.let { id ->
+                            ServiceLocator.consumoRepo.marcarImpreso(id, device.address)
+                        }
+                        snackbar.showSnackbar("Impreso OK en ${device.name ?: device.address}.")
+                    }.onFailure { err ->
+                        // Sprint 3.2.1: fallback a PDF cuando la impresion
+                        // fisica falla. Genera un PDF del ticket con el QR
+                        // para que el operador pueda abrirlo / compartirlo.
+                        val pdfFile = try {
+                            TicketPdfGenerator.generarPdf(
+                                context = context,
+                                ticket = ticket,
+                                qrBitmap = qrBitmap,
+                            )
+                        } catch (e: Exception) {
+                            null
+                        }
+                        if (pdfFile != null) {
+                            pdfFallbackPath = pdfFile.absolutePath
+                            snackbar.showSnackbar(
+                                "Impresion fallo. PDF guardado en: ${pdfFile.name}",
+                            )
+                        } else {
+                            snackbar.showSnackbar(
+                                "Impresion fallo: ${err.message}. No se pudo generar PDF.",
+                            )
+                        }
+                    }
+                }
+            },
+        )
+    }
+
+    // Sprint 3.2.1: si hay un PDF generado por fallback, mostrar card con
+    // boton "Abrir PDF" para que el operador pueda abrirlo / compartirlo.
+    pdfFallbackPath?.let { path ->
+        AlertDialog(
+            onDismissRequest = { pdfFallbackPath = null },
+            icon = { Icon(Icons.Filled.PictureAsPdf, contentDescription = null) },
+            title = { Text("Impresion fallo") },
+            text = {
+                Column {
+                    Text("La impresora no respondio. El ticket se guardo como PDF para entrega manual.")
+                    Spacer(Modifier.height(8.dp))
+                    Text(path, style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val file = File(path)
+                    if (file.exists()) {
+                        val uri: Uri = FileProvider.getUriForFile(
+                            context,
+                            "${context.packageName}.fileprovider",
+                            file,
+                        )
+                        val intent = Intent(Intent.ACTION_VIEW).apply {
+                            setDataAndType(uri, "application/pdf")
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        runCatching { context.startActivity(intent) }
+                    }
+                }) {
+                    Text("Abrir PDF")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pdfFallbackPath = null }) {
+                    Text("Cerrar")
                 }
             },
         )

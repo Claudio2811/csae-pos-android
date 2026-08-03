@@ -15,8 +15,8 @@ android {
         applicationId = "cl.csae.pos"
         minSdk = 26
         targetSdk = 36
-        versionCode = 8
-        versionName = "0.7.0-totem-garzon"
+        versionCode = 9
+        versionName = "0.7.1-ux-fixes"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
         // URL del API configurable por buildType.

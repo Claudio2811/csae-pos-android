@@ -38,6 +38,8 @@ object Routes {
     fun ticket(numero: String) = "ticket/$numero"
 }
 
+// Removido: usamos un inline remember mas simple en CsaeNavHost.
+
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 @Composable
 fun CsaeNavHost() {
@@ -47,6 +49,11 @@ fun CsaeNavHost() {
     var kiosko by remember { mutableStateOf(false) }
     var ultimoTicketNumero by remember { mutableStateOf<String?>(null) }
     var startRoute by remember { mutableStateOf<String?>(null) }
+
+    val cambiarModo = remember(nav) {
+        // Navega a mode_select limpiando todo el back stack.
+        { nav.navigate(Routes.MODE_SELECT) { popUpTo(0) { inclusive = true } } }
+    }
 
     // Sprint 3.2: decidir start destination segun modoPreferido + isLoggedIn.
     LaunchedEffect(Unit) {
@@ -156,6 +163,7 @@ fun CsaeNavHost() {
         // ====== TOTEM (sin login del operador, asume JWT ya cargado) ======
         composable(Routes.TOTEM) {
             TotemScreen(
+                onCambiarModo = cambiarModo,
                 onIrLoginTotem = { nav.navigate(Routes.LOGIN_TOTEM) },
                 onIrConfig = { nav.navigate(Routes.CONFIGURACION) },
             )
@@ -170,6 +178,7 @@ fun CsaeNavHost() {
             }
             GarzonScreen(
                 usuario = u,
+                onCambiarModo = cambiarModo,
                 onLogout = {
                     scope.launch {
                         ServiceLocator.authRepo.logout()
@@ -213,7 +222,7 @@ fun CsaeNavHost() {
             }
             POSScreen(
                 usuario = u,
-                onBack = { nav.popBackStack() },
+                onCambiarModo = cambiarModo,
                 onTicketGenerado = { t ->
                     ultimoTicketNumero = t.numero
                     nav.navigate(Routes.ticket(t.numero))
@@ -225,12 +234,12 @@ fun CsaeNavHost() {
 
         // ====== Consumos ======
         composable(Routes.CONSUMOS) {
-            ConsumosScreen(onBack = { nav.popBackStack() })
+            ConsumosScreen(onCambiarModo = cambiarModo)
         }
 
         // ====== Configuracion ======
         composable(Routes.CONFIGURACION) {
-            ConfiguracionScreen(onBack = { nav.popBackStack() })
+            ConfiguracionScreen(onCambiarModo = cambiarModo)
         }
 
         // ====== Ticket (preview con QR) ======
@@ -246,7 +255,7 @@ fun CsaeNavHost() {
                 onNuevo = {
                     nav.popBackStack(Routes.POS, inclusive = false)
                 },
-                onVolver = { nav.popBackStack() },
+                onCambiarModo = cambiarModo,
             )
         }
     }

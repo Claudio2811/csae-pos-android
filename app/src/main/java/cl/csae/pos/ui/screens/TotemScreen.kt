@@ -1,12 +1,13 @@
 package cl.csae.pos.ui.screens
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Restaurant
-import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -14,14 +15,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cl.csae.pos.di.ServiceLocator
 import cl.csae.pos.model.Comensal
 import cl.csae.pos.model.Servicio
 import cl.csae.pos.model.Ticket
+import cl.csae.pos.ui.components.CambiarModoTopBar
+import cl.csae.pos.ui.components.RutInputField
+import cl.csae.pos.ui.components.topBarColorsFor
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -30,30 +32,24 @@ import kotlinx.coroutines.launch
  *
  * Flujo pensado para kiosko self-service (tablet dedicado):
  *   1. Comensal tipea su RUT.
- *   2. Tap "GENERAR TICKET".
+ *   2. Tap "GENERAR TICKET" (o el unico servicio si hay uno solo).
  *   3. La pantalla consulta el comensal + servicios habilitados.
  *   4. Si tiene UN solo servicio, lo elige automaticamente.
- *   5. Si tiene varios, muestra chips clickeables.
- *   6. Genera el ticket (POST /pos/consumos).
- *   7. Muestra el ticket con QR por 3 segundos.
- *   8. Vuelve automaticamente al input vacio (loop).
+ *   5. Si tiene varios, muestra chips clickeables con contador.
+ *   6. Si no tiene, muestra card rojo explicativo.
+ *   7. Genera el ticket (POST /pos/consumos).
+ *   8. Muestra el ticket con QR por 3 segundos.
+ *   9. Vuelve automaticamente al input vacio (loop).
  *
- * La pantalla NO muestra historial completo ni menus. Solo los ultimos 5
- * tickets generados en la sesion (para que el comensal pueda volver a ver
- * su ticket si la pantalla se confunde).
- *
- * **Importante:** el tótem no requiere login del operador. La idea es que
- * el dispositivo este fisicamente en modo kiosko y el comensal se identifica
- * por RUT. El backend autoriza el consumo segun la membresia del comensal.
- *
- * Como la API actual exige JWT (interceptor de OkHttp), en MVP el tótem
- * usa un usuario kiosko (mapeo SP -> restaurante con claim opcional, ver
- * CON-79). Si el operador no esta logueado, la API responde 401; en ese
- * caso la pantalla mostrara el error y permitira ir a Login TOTEM.
+ * Sprint 3.2.1: el top bar tiene boton "Cambiar modo" para volver al
+ * selector. El RUT usa el nuevo RutInputField con auto-formato + boton K.
  */
+private val TotemBlue = Color(0xFF1565C0)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TotemScreen(
+    onCambiarModo: () -> Unit = {},
     onIrLoginTotem: () -> Unit = {},
     onIrConfig: () -> Unit = {},
 ) {
@@ -123,13 +119,17 @@ fun TotemScreen(
                     error = "No se encontro comensal con RUT $rut en este casino."
                 }
                 c.servicios.isEmpty() -> {
-                    estado = EstadoTotem.Idle
-                    error = "El comensal no tiene servicios habilitados."
+                    // Sprint 3.2.1: guardamos el comensal para mostrar el card
+                    // "no tiene servicios" en vez de solo un mensaje de error.
+                    comensal = c
+                    serviciosVisibles = emptyList()
+                    estado = EstadoTotem.SinServicios
                 }
                 c.servicios.size == 1 -> {
                     comensal = c
                     serviciosVisibles = c.servicios
                     servicioSeleccionado = c.servicios.first()
+                    estado = EstadoTotem.UnServicio
                     // Autogenerar ticket.
                     generarTicket(c, c.servicios.first())
                 }
@@ -143,41 +143,38 @@ fun TotemScreen(
         }
     }
 
-    Surface(modifier = Modifier.fillMaxSize(), color = Color(0xFF1565C0)) {
-        Box(modifier = Modifier.fillMaxSize()) {
+    Scaffold(
+        containerColor = TotemBlue,
+        topBar = {
+            CambiarModoTopBar(
+                title = "TOTEM - CSAE",
+                subtitle = "Kiosko self-service",
+                onCambiarModo = onCambiarModo,
+                actions = {
+                    TextButton(onClick = onIrLoginTotem) {
+                        Text("LOGIN", color = Color.White)
+                    }
+                    TextButton(onClick = onIrConfig) {
+                        Text("CONFIG", color = Color.White)
+                    }
+                },
+                colors = topBarColorsFor(TotemBlue),
+            )
+        },
+    ) { padding ->
+        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             Column(
                 modifier = Modifier.fillMaxSize().padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                // Header
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(
-                        "TÓTEM - CSAE",
-                        color = Color.White,
-                        fontSize = 28.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(onClick = onIrLoginTotem) {
-                            Text("LOGIN OPERADOR", color = Color.White)
-                        }
-                        TextButton(onClick = onIrConfig) {
-                            Text("CONFIG", color = Color.White)
-                        }
-                    }
-                }
                 Text(
                     "Tipea tu RUT y genera tu ticket",
                     color = Color.White.copy(alpha = 0.9f),
                     fontSize = 18.sp,
                 )
 
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(8.dp))
 
                 when (estado) {
                     EstadoTotem.TicketMostrado -> {
@@ -193,52 +190,81 @@ fun TotemScreen(
                         }
                     }
                     else -> {
-                        // Input RUT grande
-                        OutlinedTextField(
+                        // Input RUT grande con auto-formato y boton K
+                        RutInputField(
                             value = rut,
-                            onValueChange = { v ->
-                                val filtrado = v.filter { it.isDigit() || it == '-' || it == '.' || it == 'k' || it == 'K' }
-                                rut = filtrado
+                            onValueChange = {
+                                rut = it
                                 error = null
                             },
-                            label = { Text("Tu RUT (12345678-5)") },
-                            singleLine = true,
-                            enabled = estado == EstadoTotem.Idle,
+                            label = "Tu RUT",
+                            placeholder = "11.111.111-1",
+                            enabled = estado == EstadoTotem.Idle || estado == EstadoTotem.Buscando,
+                            isError = error != null,
                             modifier = Modifier.fillMaxWidth(),
-                            keyboardOptions = KeyboardOptions(
-                                keyboardType = KeyboardType.Number,
-                                imeAction = ImeAction.Done,
-                            ),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = Color.White,
-                                unfocusedContainerColor = Color.White,
-                                focusedTextColor = Color.Black,
-                                unfocusedTextColor = Color.Black,
-                            ),
                         )
 
-                        if (estado == EstadoTotem.SeleccionServicio) {
-                            Text(
-                                "Selecciona tu servicio:",
-                                color = Color.White,
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                            FlowRowChips(
-                                items = serviciosVisibles,
-                                selected = servicioSeleccionado,
-                                onSelect = { servicioSeleccionado = it },
-                            )
+                        // Sprint 3.2.1: feedback visual del servicio.
+                        when (estado) {
+                            EstadoTotem.SinServicios -> {
+                                comensal?.let { c ->
+                                    SinServiciosCard(nombre = "${c.nombre} ${c.apellido ?: ""}".trim(), rut = c.rut)
+                                }
+                            }
+                            EstadoTotem.UnServicio -> {
+                                serviciosVisibles.firstOrNull()?.let { s ->
+                                    UnServicioCard(
+                                        nombre = "${comensal?.nombre ?: ""} ${comensal?.apellido ?: ""}".trim(),
+                                        servicio = s,
+                                    )
+                                }
+                            }
+                            EstadoTotem.SeleccionServicio -> {
+                                Text(
+                                    "${serviciosVisibles.size} servicios disponibles. Selecciona uno:",
+                                    color = Color.White,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                FlowRowChips(
+                                    items = serviciosVisibles,
+                                    selected = servicioSeleccionado,
+                                    onSelect = { servicioSeleccionado = it },
+                                )
+                            }
+                            else -> { /* Idle, Buscando, Generando -> solo spinner abajo */ }
+                        }
+
+                        if (estado == EstadoTotem.Buscando || estado == EstadoTotem.Generando) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(28.dp),
+                                    color = Color.White,
+                                )
+                                Text(
+                                    when (estado) {
+                                        EstadoTotem.Buscando -> "Buscando comensal..."
+                                        EstadoTotem.Generando -> "Generando ticket..."
+                                        else -> ""
+                                    },
+                                    color = Color.White,
+                                    fontSize = 18.sp,
+                                )
+                            }
                         }
 
                         Button(
                             onClick = {
-                                if (estado == EstadoTotem.SeleccionServicio) {
-                                    val c = comensal
-                                    val s = servicioSeleccionado
-                                    if (c != null && s != null) generarTicket(c, s)
-                                } else {
-                                    buscar()
+                                when (estado) {
+                                    EstadoTotem.SeleccionServicio -> {
+                                        val c = comensal
+                                        val s = servicioSeleccionado
+                                        if (c != null && s != null) generarTicket(c, s)
+                                    }
+                                    else -> buscar()
                                 }
                             },
                             enabled = when (estado) {
@@ -248,43 +274,43 @@ fun TotemScreen(
                             },
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = Color.White,
-                                contentColor = Color(0xFF1565C0),
+                                contentColor = TotemBlue,
                             ),
-                            modifier = Modifier.fillMaxWidth().height(80.dp),
+                            modifier = Modifier.fillMaxWidth().height(72.dp),
                         ) {
-                            if (estado == EstadoTotem.Buscando || estado == EstadoTotem.Generando) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(28.dp),
-                                    color = Color(0xFF1565C0),
-                                )
-                                Spacer(Modifier.width(12.dp))
-                                Text(
-                                    if (estado == EstadoTotem.Buscando) "Buscando..." else "Generando...",
-                                    fontSize = 20.sp,
-                                    fontWeight = FontWeight.Bold,
-                                )
-                            } else {
-                                Icon(Icons.Filled.TouchApp, contentDescription = null, modifier = Modifier.size(32.dp))
-                                Spacer(Modifier.width(8.dp))
-                                Text(
-                                    if (estado == EstadoTotem.SeleccionServicio) "GENERAR TICKET" else "BUSCAR",
-                                    fontSize = 24.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                )
-                            }
+                            Icon(
+                                when (estado) {
+                                    EstadoTotem.SeleccionServicio -> Icons.Filled.Restaurant
+                                    else -> Icons.Filled.Search
+                                },
+                                contentDescription = null,
+                                modifier = Modifier.size(28.dp),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                when (estado) {
+                                    EstadoTotem.SeleccionServicio -> "GENERAR TICKET"
+                                    else -> "BUSCAR"
+                                },
+                                fontSize = 22.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                            )
                         }
                     }
                 }
 
                 error?.let { msg ->
                     Card(
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFB00020)),
                     ) {
-                        Text(
-                            msg,
-                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        Row(
                             modifier = Modifier.padding(12.dp),
-                        )
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(Icons.Filled.Error, contentDescription = null, tint = Color.White)
+                            Spacer(Modifier.width(8.dp))
+                            Text(msg, color = Color.White, fontWeight = FontWeight.SemiBold)
+                        }
                     }
                 }
 
@@ -303,7 +329,7 @@ fun TotemScreen(
     }
 }
 
-private enum class EstadoTotem { Idle, Buscando, SeleccionServicio, Generando, TicketMostrado }
+private enum class EstadoTotem { Idle, Buscando, SeleccionServicio, Generando, TicketMostrado, UnServicio, SinServicios }
 
 @Composable
 private fun FlowRowChips(
@@ -332,6 +358,66 @@ private fun FlowRowChips(
     }
 }
 
+/**
+ * Sprint 3.2.1: card verde que muestra el unico servicio del comensal y lo
+ * auto-selecciona. Mas amigable que la pantalla anterior.
+ */
+@Composable
+private fun UnServicioCard(nombre: String, servicio: Servicio) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF1B5E20)),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Color.White, modifier = Modifier.size(36.dp))
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(nombre, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+                Text(
+                    "Servicio: ${servicio.nombre} - $${servicio.precio}",
+                    color = Color.White,
+                    fontSize = 16.sp,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Sprint 3.2.1: card rojo que indica que el comensal no tiene servicios
+ * habilitados hoy. Antes era un mensaje de error generico.
+ */
+@Composable
+private fun SinServiciosCard(nombre: String, rut: String) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFB00020)),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Filled.Block, contentDescription = null, tint = Color.White, modifier = Modifier.size(36.dp))
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(nombre, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+                Text("RUT: $rut", color = Color.White.copy(alpha = 0.9f), style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "No hay servicios habilitados para este comensal hoy.",
+                    color = Color.White,
+                    fontSize = 16.sp,
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun TicketMostradoCard(
     nombre: String,
@@ -354,14 +440,14 @@ private fun TicketMostradoCard(
                 "TICKET GENERADO",
                 fontSize = 22.sp,
                 fontWeight = FontWeight.ExtraBold,
-                color = Color(0xFF1565C0),
+                color = TotemBlue,
             )
             Spacer(Modifier.height(8.dp))
             Text(nombre.trim(), fontSize = 26.sp, fontWeight = FontWeight.Bold)
             Text("RUT: $rut", fontSize = 18.sp)
             Spacer(Modifier.height(8.dp))
             Text("Servicio: $servicio", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-            Text("Precio: $$precio", fontSize = 32.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFF1565C0))
+            Text("Precio: $$precio", fontSize = 32.sp, fontWeight = FontWeight.ExtraBold, color = TotemBlue)
             Spacer(Modifier.height(8.dp))
             Text("N° $ticketNumero", style = MaterialTheme.typography.bodyMedium)
             Spacer(Modifier.height(12.dp))

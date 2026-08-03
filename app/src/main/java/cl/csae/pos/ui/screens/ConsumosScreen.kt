@@ -4,7 +4,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -15,6 +14,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cl.csae.pos.data.api.ConsumoListItemDto
 import cl.csae.pos.di.ServiceLocator
+import cl.csae.pos.ui.components.CambiarModoTopBar
 import kotlinx.coroutines.launch
 
 /**
@@ -30,7 +30,7 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConsumosScreen(
-    onBack: () -> Unit,
+    onCambiarModo: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var consumos by remember { mutableStateOf<List<ConsumoListItemDto>>(emptyList()) }
@@ -55,13 +55,9 @@ fun ConsumosScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Consumos del turno") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver")
-                    }
-                },
+            CambiarModoTopBar(
+                title = "Consumos del turno",
+                onCambiarModo = onCambiarModo,
                 actions = {
                     IconButton(onClick = { cargar() }, enabled = !loading) {
                         if (loading) {
@@ -75,12 +71,6 @@ fun ConsumosScreen(
                         }
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onPrimary,
-                    actionIconContentColor = MaterialTheme.colorScheme.onPrimary,
-                ),
             )
         },
         bottomBar = {

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!--
+      Sprint 3.2.1: paths para que el FileProvider pueda servir los PDFs
+      generados por TicketPdfGenerator.
+
+      - cache-path: archivos en context.cacheDir (usado para los PDFs que
+        vienen de MediaStore en API 29+).
+      - external-path: /storage/emulated/0/Download (usado en API < 29).
+      - external-files-path: app-specific external files (no usado por
+        ahora pero lo dejamos por si en el futuro queremos escribir en
+        getExternalFilesDir()).
+    -->
+    <cache-path name="ticket_pdf_cache" path="." />
+    <external-path name="downloads_public" path="Download/csae-tickets/" />
+    <external-files-path name="external_downloads" path="Download/csae-tickets/" />
+</paths>

@@ -4,11 +4,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PointOfSale
 import androidx.compose.material.icons.filled.Restaurant
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material3.*
@@ -27,11 +26,15 @@ import cl.csae.pos.model.Comensal
 import cl.csae.pos.model.Servicio
 import cl.csae.pos.model.Ticket
 import cl.csae.pos.model.UsuarioPos
+import cl.csae.pos.ui.components.CambiarModoTopBar
+import cl.csae.pos.ui.components.RutInputField
 import kotlinx.coroutines.launch
 
 /**
  * Pantalla principal del POS. Sprint 3.1.2: contra la API real.
  * Sprint 3.2: teclado numerico en RUT + menu inferior con Consumos / Config.
+ * Sprint 3.2.1: RUTInputField con auto-formato + boton K, top bar con
+ * "Cambiar modo" hacia mode_select.
  *
  * Flujo:
  *   1. Operador ingresa RUT del comensal.
@@ -49,7 +52,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun POSScreen(
     usuario: UsuarioPos,
-    onBack: () -> Unit,
+    onCambiarModo: () -> Unit = {},
     onTicketGenerado: (Ticket) -> Unit,
     onIrConsumos: () -> Unit = {},
     onIrConfig: () -> Unit = {},
@@ -121,18 +124,10 @@ fun POSScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("POS - Generar Ticket") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onPrimary,
-                ),
+            CambiarModoTopBar(
+                title = "POS - Generar Ticket",
+                subtitle = "Operador: ${usuario.displayName}",
+                onCambiarModo = onCambiarModo,
             )
         },
         bottomBar = {
@@ -169,28 +164,17 @@ fun POSScreen(
         ) {
             // Paso 1: RUT
             Text("1. RUT del comensal", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            OutlinedTextField(
+            RutInputField(
                 value = rut,
-                onValueChange = { v ->
-                    // Sprint 3.2: solo [0-9Kk.-], sin espacios ni letras, teclado numerico nativo.
-                    val filtrado = v.filter { it.isDigit() || it == '-' || it == '.' || it == 'k' || it == 'K' }
-                    rut = filtrado
+                onValueChange = {
+                    rut = it
                     error = null
                 },
-                label = { Text("12345678-5") },
-                singleLine = true,
+                label = "12345678-5",
+                placeholder = "11.111.111-1",
                 enabled = !loading,
+                isError = error != null,
                 modifier = Modifier.fillMaxWidth().focusRequester(focusRut),
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Number,
-                    imeAction = ImeAction.Search,
-                ),
-                keyboardActions = KeyboardActions(onSearch = { buscar() }),
-                trailingIcon = {
-                    IconButton(onClick = { buscar() }, enabled = !loading) {
-                        Icon(Icons.Filled.Search, contentDescription = "Buscar")
-                    }
-                },
             )
             Button(
                 onClick = { buscar() },
@@ -202,11 +186,17 @@ fun POSScreen(
 
             error?.let { msg ->
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
-                    Text(
-                        msg,
+                    Row(
                         modifier = Modifier.padding(12.dp),
-                        color = MaterialTheme.colorScheme.onErrorContainer,
-                    )
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Filled.Error, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            msg,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                    }
                 }
             }
 

@@ -9,7 +9,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.Print
 import androidx.compose.material3.*
@@ -23,6 +22,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import cl.csae.pos.BuildConfig
 import cl.csae.pos.di.ServiceLocator
+import cl.csae.pos.ui.components.CambiarModoTopBar
 import kotlinx.coroutines.launch
 
 /**
@@ -40,7 +40,7 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConfiguracionScreen(
-    onBack: () -> Unit,
+    onCambiarModo: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -150,18 +150,9 @@ fun ConfiguracionScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Configuracion") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onPrimary,
-                ),
+            CambiarModoTopBar(
+                title = "Configuracion",
+                onCambiarModo = onCambiarModo,
             )
         },
         snackbarHost = { SnackbarHost(snackbar) },

@@ -16,7 +16,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Error
-import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -32,6 +31,8 @@ import androidx.core.content.ContextCompat
 import cl.csae.pos.data.api.ValidarTicketResponse
 import cl.csae.pos.di.ServiceLocator
 import cl.csae.pos.model.UsuarioPos
+import cl.csae.pos.ui.components.CambiarModoTopBar
+import cl.csae.pos.ui.components.topBarColorsFor
 import com.google.mlkit.vision.barcode.BarcodeScannerOptions
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
@@ -63,7 +64,8 @@ private const val TAG = "GarzonScreen"
 @Composable
 fun GarzonScreen(
     usuario: UsuarioPos,
-    onLogout: () -> Unit,
+    onCambiarModo: () -> Unit = {},
+    onLogout: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -108,183 +110,173 @@ fun GarzonScreen(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        if (hasCameraPermission) {
-            // CameraX preview + ML Kit analyzer.
-            AndroidView(
-                factory = { ctx ->
-                    val previewView = PreviewView(ctx)
-                    val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
-                    cameraProviderFuture.addListener({
-                        try {
-                            val cameraProvider = cameraProviderFuture.get()
-                            val preview = Preview.Builder().build().also {
-                                it.setSurfaceProvider(previewView.surfaceProvider)
-                            }
-                            val analyzer = ImageAnalysis.Builder()
-                                .setTargetResolution(Size(1280, 720))
-                                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                                .build()
-                            val scanner = BarcodeScanning.getClient(
-                                BarcodeScannerOptions.Builder()
-                                    .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
-                                    .build(),
-                            )
-                            val executor = Executors.newSingleThreadExecutor()
-                            analyzer.setAnalyzer(executor) { imageProxy ->
-                                procesarFrame(imageProxy, scanner) { raw ->
-                                    if (raw != lastScannedToken && !processing && dialogState is DialogState.None && successMessage == null && errorMessage == null) {
-                                        lastScannedToken = raw
-                                        processing = true
-                                        scope.launch {
-                                            val r = ServiceLocator.ticketValidarRepo.validar(raw)
-                                            processing = false
-                                            r.onSuccess { resp ->
-                                                dialogState = DialogState.Resultado(resp)
-                                            }.onFailure { e ->
-                                                dialogState = DialogState.Resultado(
-                                                    ValidarTicketResponse(
-                                                        valido = false,
-                                                        mensaje = e.message ?: "Error validando ticket",
-                                                        ticket = null,
+    Scaffold(
+        topBar = {
+            CambiarModoTopBar(
+                title = "Garzon",
+                subtitle = "Escaner QR - ${usuario.displayName}",
+                onCambiarModo = onCambiarModo,
+                onLogout = onLogout,
+                colors = topBarColorsFor(Color(0xFF6D4C41)),  // cafe del modo garzon
+            )
+        },
+    ) { padding ->
+        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+            if (hasCameraPermission) {
+                // CameraX preview + ML Kit analyzer.
+                AndroidView(
+                    factory = { ctx ->
+                        val previewView = PreviewView(ctx)
+                        val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
+                        cameraProviderFuture.addListener({
+                            try {
+                                val cameraProvider = cameraProviderFuture.get()
+                                val preview = Preview.Builder().build().also {
+                                    it.setSurfaceProvider(previewView.surfaceProvider)
+                                }
+                                val analyzer = ImageAnalysis.Builder()
+                                    .setTargetResolution(Size(1280, 720))
+                                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                                    .build()
+                                val scanner = BarcodeScanning.getClient(
+                                    BarcodeScannerOptions.Builder()
+                                        .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+                                        .build(),
+                                )
+                                val executor = Executors.newSingleThreadExecutor()
+                                analyzer.setAnalyzer(executor) { imageProxy ->
+                                    procesarFrame(imageProxy, scanner) { raw ->
+                                        if (raw != lastScannedToken && !processing && dialogState is DialogState.None && successMessage == null && errorMessage == null) {
+                                            lastScannedToken = raw
+                                            processing = true
+                                            scope.launch {
+                                                val r = ServiceLocator.ticketValidarRepo.validar(raw)
+                                                processing = false
+                                                r.onSuccess { resp ->
+                                                    dialogState = DialogState.Resultado(resp)
+                                                }.onFailure { e ->
+                                                    dialogState = DialogState.Resultado(
+                                                        ValidarTicketResponse(
+                                                            valido = false,
+                                                            mensaje = e.message ?: "Error validando ticket",
+                                                            ticket = null,
+                                                        )
                                                     )
-                                                )
+                                                }
                                             }
                                         }
                                     }
                                 }
+                                cameraProvider.unbindAll()
+                                cameraProvider.bindToLifecycle(
+                                    lifecycleOwner,
+                                    CameraSelector.DEFAULT_BACK_CAMERA,
+                                    preview,
+                                    analyzer,
+                                )
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Camera init failed", e)
                             }
-                            cameraProvider.unbindAll()
-                            cameraProvider.bindToLifecycle(
-                                lifecycleOwner,
-                                CameraSelector.DEFAULT_BACK_CAMERA,
-                                preview,
-                                analyzer,
-                            )
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Camera init failed", e)
-                        }
-                    }, ContextCompat.getMainExecutor(ctx))
-                    previewView
-                },
-                modifier = Modifier.fillMaxSize(),
-            )
+                        }, ContextCompat.getMainExecutor(ctx))
+                        previewView
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                )
 
-            // Overlay UI encima de la camara
-            Column(
-                modifier = Modifier.fillMaxSize().padding(16.dp),
-                verticalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
+                // Overlay UI encima de la camara
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(16.dp),
+                    verticalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    Card(colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.6f))) {
-                        Text(
-                            "Garzon: ${usuario.displayName}",
-                            color = Color.White,
-                            fontSize = 14.sp,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                        )
-                    }
-                    IconButton(onClick = onLogout) {
-                        Card(colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.6f))) {
+                    // Sprint 3.2.1: el header (Garzon name + Salir) lo movimos
+                    // al CambiarModoTopBar de arriba. Dejamos solo el texto
+                    // guia y los mensajes de estado.
+                    Spacer(Modifier.height(8.dp))
+
+                    // Marco de enfoque + texto guia
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                        Spacer(Modifier.height(8.dp))
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.6f)),
+                        ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Icon(Icons.Filled.ExitToApp, contentDescription = "Logout", tint = Color.White)
-                                Spacer(Modifier.width(4.dp))
-                                Text("Salir", color = Color.White, fontSize = 14.sp)
+                                Icon(Icons.Filled.CameraAlt, contentDescription = null, tint = Color.White)
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    "Apunta al QR del ticket del comensal",
+                                    color = Color.White,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
                             }
                         }
                     }
-                }
 
-                // Marco de enfoque + texto guia
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                    Spacer(Modifier.height(8.dp))
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.6f)),
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(Icons.Filled.CameraAlt, contentDescription = null, tint = Color.White)
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                "Apunta al QR del ticket del comensal",
-                                color = Color.White,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                        }
-                    }
-                }
-
-                // Estado / mensaje
-                successMessage?.let { msg ->
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1B5E20)),
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Color.White)
-                            Spacer(Modifier.width(8.dp))
-                            Text(msg, color = Color.White, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                } ?: run {
-                    errorMessage?.let { msg ->
+                    // Estado / mensaje
+                    successMessage?.let { msg ->
                         Card(
                             modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFFB00020)),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1B5E20)),
                         ) {
                             Row(
                                 modifier = Modifier.padding(16.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Icon(Icons.Filled.Error, contentDescription = null, tint = Color.White)
+                                Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Color.White)
                                 Spacer(Modifier.width(8.dp))
                                 Text(msg, color = Color.White, fontWeight = FontWeight.Bold)
                             }
                         }
                     } ?: run {
-                        if (processing) {
+                        errorMessage?.let { msg ->
                             Card(
                                 modifier = Modifier.fillMaxWidth(),
-                                colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.7f)),
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFFB00020)),
                             ) {
                                 Row(
                                     modifier = Modifier.padding(16.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
-                                    CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White)
+                                    Icon(Icons.Filled.Error, contentDescription = null, tint = Color.White)
                                     Spacer(Modifier.width(8.dp))
-                                    Text("Validando QR...", color = Color.White)
+                                    Text(msg, color = Color.White, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        } ?: run {
+                            if (processing) {
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.7f)),
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(16.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White)
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("Validando QR...", color = Color.White)
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            }
-        } else {
-            // Sin permiso de camara
-            Column(
-                modifier = Modifier.fillMaxSize().padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-            ) {
-                Icon(Icons.Filled.CameraAlt, contentDescription = null, modifier = Modifier.size(72.dp), tint = Color.Gray)
-                Spacer(Modifier.height(16.dp))
-                Text("Se necesita permiso de camara para escanear.", style = MaterialTheme.typography.bodyLarge)
-                Spacer(Modifier.height(8.dp))
-                Button(onClick = { cameraPermissionLauncher.launch(Manifest.permission.CAMERA) }) {
-                    Text("Conceder permiso")
+            } else {
+                // Sin permiso de camara
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    Icon(Icons.Filled.CameraAlt, contentDescription = null, modifier = Modifier.size(72.dp), tint = Color.Gray)
+                    Spacer(Modifier.height(16.dp))
+                    Text("Se necesita permiso de camara para escanear.", style = MaterialTheme.typography.bodyLarge)
+                    Spacer(Modifier.height(8.dp))
+                    Button(onClick = { cameraPermissionLauncher.launch(Manifest.permission.CAMERA) }) {
+                        Text("Conceder permiso")
+                    }
                 }
             }
         }
