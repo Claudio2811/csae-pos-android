@@ -15,8 +15,8 @@ android {
         applicationId = "cl.csae.pos"
         minSdk = 26
         targetSdk = 36
-        versionCode = 9
-        versionName = "0.7.1-ux-fixes"
+        versionCode = 10
+        versionName = "0.7.2-rut-keypad"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
         // URL del API configurable por buildType.

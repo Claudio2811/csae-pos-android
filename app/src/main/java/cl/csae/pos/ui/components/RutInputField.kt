@@ -1,10 +1,15 @@
 package cl.csae.pos.ui.components
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -24,18 +29,25 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 
 /**
- * Input de RUT chileno con auto-formato y boton K.
+ * Input de RUT chileno con auto-formato y teclado en pantalla.
  *
- * - Teclado nativo numerico (KeyboardType.Number). Como Android no muestra la
- *   K en ese teclado, agregamos un trailing "K" (boton) que suma/quita K al
- *   final del RUT.
- * - Filtra entrada a [0-9Kk.-] (sin espacios ni letras raras).
- * - Si [autoFormat] esta activo, mientras tipea aplica la mascara chilena
- *   "12.345.678-9" (millares con punto, guion antes del DV, o K como DV).
- * - Leading: icono de persona.
+ * Dos modos:
  *
- * Sprint 3.2.1: lo agregamos para soportar RUTs terminados en K (DV=10) que
- * el teclado numerico nativo no permite tipear.
+ * 1. **Custom keypad** (default, [useCustomKeypad] = true): el campo es
+ *    readOnly (no aparece el teclado nativo) y debajo se renderiza un
+ *    [NumericKeypad] con la distribucion 1-9 / K, 0, <- . Pensado para
+ *    modo kiosko (Totem) y POS donde la K no se puede tipear con el
+ *    teclado numerico del sistema.
+ *
+ * 2. **Legacy** ([useCustomKeypad] = false): teclado nativo numerico +
+ *    un boton "K" en el trailing icon que toggle la K al final. Se
+ *    mantiene por si alguna pantalla quiere esa UX.
+ *
+ * El formato de salida es siempre el mismo ("12.345.678-9" o
+ * "12.345.678-K" cuando el DV es K) via [formatRutForDisplay].
+ *
+ * Sprint 3.2.1: agregamos el modo legacy con K trailing.
+ * Sprint 3.2.2: agregamos el [NumericKeypad] y lo dejamos como default.
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -48,82 +60,132 @@ fun RutInputField(
     autoFormat: Boolean = true,
     enabled: Boolean = true,
     isError: Boolean = false,
+    useCustomKeypad: Boolean = true,
 ) {
     val visualTransformation = remember(autoFormat) {
         if (autoFormat) RutVisualTransformation() else VisualTransformation.None
     }
 
-    OutlinedTextField(
-        value = value,
-        onValueChange = { raw ->
-            // 1. Filtrar: solo [0-9Kk.-]. Descarta espacios y letras raras.
-            val filtrado = raw.filter { ch ->
-                ch.isDigit() || ch == '-' || ch == '.' || ch == 'k' || ch == 'K'
-            }
-            if (!autoFormat) {
-                onValueChange(filtrado)
-                return@OutlinedTextField
-            }
-            // 2. Quitar formato existente y dejar solo el "esqueleto" que
-            //    re-formatearemos al final.
-            val clean = filtrado.replace(Regex("[.\\-]"), "").uppercase()
-            // 3. Si tipeo K dos veces, dejamos solo la primera ocurrencia.
-            val normalized = if (clean.count { it == 'K' } > 1) {
-                val firstK = clean.indexOf('K')
-                clean.substring(0, firstK + 1) + clean.substring(firstK + 1).replace("K", "")
-            } else {
-                clean
-            }
-            // 4. Si el usuario ya puso una K, todo lo que viene despues no es
-            //    valido (K es el DV, siempre va al final). La cortamos.
-            val sinExtra = if (normalized.contains('K')) {
-                val idxK = normalized.indexOf('K')
-                normalized.substring(0, idxK + 1)
-            } else {
-                normalized
-            }
-            // 5. Limitar a un maximo razonable (8 digitos + K = 9 chars).
-            val trimmed = if (sinExtra.length > 9) sinExtra.substring(0, 9) else sinExtra
-            onValueChange(trimmed)
-        },
-        label = { Text(label) },
-        placeholder = { Text(placeholder) },
-        singleLine = true,
-        enabled = enabled,
-        isError = isError,
-        leadingIcon = { Icon(Icons.Filled.Person, contentDescription = null) },
-        trailingIcon = {
-            // Mostrar el boton K solo si el RUT no esta "completo" (10 chars
-            // limpios = 8 digitos + K + margen). Asi no estorba al final.
-            if (value.length <= 10) {
-                Box(modifier = Modifier.size(48.dp), contentAlignment = Alignment.Center) {
-                    TextButton(
-                        onClick = {
-                            onValueChange(
-                                if (value.endsWith("K", ignoreCase = true)) {
-                                    value.dropLast(1)
-                                } else {
-                                    value + "K"
-                                }
-                            )
-                        },
-                        enabled = enabled,
-                        contentPadding = PaddingValues(0.dp),
-                        modifier = Modifier.size(40.dp),
+    Column(modifier = modifier) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = { raw ->
+                onValueChange(normalizeRutInput(raw, autoFormat))
+            },
+            label = { Text(label) },
+            placeholder = { Text(placeholder) },
+            singleLine = true,
+            enabled = enabled,
+            readOnly = useCustomKeypad,
+            isError = isError,
+            leadingIcon = { Icon(Icons.Filled.Person, contentDescription = null) },
+            trailingIcon = {
+                if (!useCustomKeypad) {
+                    // Modo legacy: trailing K button.
+                    if (value.length <= 10) {
+                        Box(
+                            modifier = Modifier.size(48.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            TextButton(
+                                onClick = {
+                                    onValueChange(
+                                        if (value.endsWith("K", ignoreCase = true)) {
+                                            value.dropLast(1)
+                                        } else {
+                                            value + "K"
+                                        }
+                                    )
+                                },
+                                enabled = enabled,
+                                contentPadding = PaddingValues(0.dp),
+                                modifier = Modifier.size(40.dp),
+                            ) {
+                                Text(
+                                    text = "K",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    // Modo keypad: indicamos visualmente que el campo esta
+                    // bloqueado al teclado nativo con un candadito.
+                    Box(
+                        modifier = Modifier.size(48.dp),
+                        contentAlignment = Alignment.Center,
                     ) {
-                        Text(
-                            text = "K",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.primary,
+                        Icon(
+                            imageVector = Icons.Filled.Lock,
+                            contentDescription = "Teclado en pantalla",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp),
                         )
                     }
                 }
-            }
-        },
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-        visualTransformation = visualTransformation,
-        modifier = modifier,
-    )
+            },
+            keyboardOptions = if (useCustomKeypad) {
+                // readOnly=true ya suprime el soft keyboard nativo en M3, pero
+                // pasamos KeyboardType.Text explicito para no pedir teclado
+                // numerico que no se va a usar.
+                KeyboardOptions(keyboardType = KeyboardType.Text)
+            } else {
+                KeyboardOptions(keyboardType = KeyboardType.Number)
+            },
+            visualTransformation = visualTransformation,
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        if (useCustomKeypad) {
+            Spacer(Modifier.height(12.dp))
+            NumericKeypad(
+                onKeyPress = { ch ->
+                    onValueChange(normalizeRutInput(value + ch, autoFormat))
+                },
+                onBackspace = {
+                    if (value.isNotEmpty()) {
+                        onValueChange(value.dropLast(1))
+                    }
+                },
+                enabled = enabled,
+            )
+        }
+    }
+}
+
+/**
+ * Normaliza un string "crudo" (lo que podria llegar del OutlinedTextField o
+ * del keypad) al formato canonico del RUT sin puntos ni guion: solo digitos
+ * y a lo mas una 'K' al final, maximo 9 caracteres.
+ *
+ * - Acepta solo [0-9Kk.-] (descarta todo lo demas).
+ * - Mayusculas.
+ * - Una sola K (si hay varias, deja la primera y descarta el resto).
+ * - K es siempre el ultimo caracter (lo que viene despues se descarta).
+ * - Largo maximo 9 (8 cuerpo + DV).
+ *
+ * Si [autoFormat] es false, solo filtra y devuelve (sin normalizar formato).
+ */
+internal fun normalizeRutInput(raw: String, autoFormat: Boolean = true): String {
+    val filtrado = raw.filter { ch ->
+        ch.isDigit() || ch == '-' || ch == '.' || ch == 'k' || ch == 'K'
+    }
+    if (!autoFormat) return filtrado
+    val clean = filtrado.replace(Regex("[.\\-]"), "").uppercase()
+    val normalized = if (clean.count { it == 'K' } > 1) {
+        val firstK = clean.indexOf('K')
+        clean.substring(0, firstK + 1) + clean.substring(firstK + 1).replace("K", "")
+    } else {
+        clean
+    }
+    val sinExtra = if (normalized.contains('K')) {
+        val idxK = normalized.indexOf('K')
+        normalized.substring(0, idxK + 1)
+    } else {
+        normalized
+    }
+    return if (sinExtra.length > 9) sinExtra.substring(0, 9) else sinExtra
 }
 
 /**
@@ -142,8 +204,9 @@ private class RutVisualTransformation : VisualTransformation {
         val rawLen = raw.length
         // Mapeo de offsets: cada raw char -> misma posicion en out solo si
         // el formato no cambia. Cuando agregamos puntos/guion, los raw chars
-        // posteriores se desplazan. Usamos Identity para que el caret siga
-        // la longitud del out (mas simple, sirve para nuestro caso).
+        // posteriores se desplazan. Usamos ratio para que el caret siga
+        // aproximadamente la longitud del out (mas simple, sirve para
+        // nuestro caso).
         val offsetMap = object : OffsetMapping {
             override fun originalToTransformed(offset: Int): Int {
                 if (rawLen == 0) return 0
