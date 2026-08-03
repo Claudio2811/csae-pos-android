@@ -1,7 +1,9 @@
 package cl.csae.pos.ui.screens
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.CheckCircle
@@ -22,16 +24,17 @@ import cl.csae.pos.model.Comensal
 import cl.csae.pos.model.Servicio
 import cl.csae.pos.model.Ticket
 import cl.csae.pos.ui.components.CambiarModoTopBar
+import cl.csae.pos.ui.components.NumericKeypad
 import cl.csae.pos.ui.components.RutInputField
 import cl.csae.pos.ui.components.topBarColorsFor
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * Pantalla del modo TOTEM (sprint 3.2).
+ * Pantalla del modo TOTEM (sprint 3.2 + 3.3).
  *
  * Flujo pensado para kiosko self-service (tablet dedicado):
- *   1. Comensal tipea su RUT.
+ *   1. Comensal tipea su RUT en el input de la parte superior.
  *   2. Tap "GENERAR TICKET" (o el unico servicio si hay uno solo).
  *   3. La pantalla consulta el comensal + servicios habilitados.
  *   4. Si tiene UN solo servicio, lo elige automaticamente.
@@ -41,8 +44,15 @@ import kotlinx.coroutines.launch
  *   8. Muestra el ticket con QR por 3 segundos.
  *   9. Vuelve automaticamente al input vacio (loop).
  *
- * Sprint 3.2.1: el top bar tiene boton "Cambiar modo" para volver al
- * selector. El RUT usa el nuevo RutInputField con auto-formato + boton K.
+ * Sprint 3.3 (fix UX):
+ * - NumericKeypad vive en el `bottomBar` del Scaffold (panel fijo abajo).
+ * - Todo el resto (RUT, servicios, feedback, boton) vive en un Column con
+ *   verticalScroll, asi el operador puede scrollear para ver TODOS los
+ *   servicios en pantallas chicas o si hay muchos.
+ * - RutInputField ya no embebe el keypad: el flag `useCustomKeypad = false`
+ *   delega la captura al NumericKeypad del bottomBar.
+ * - El keypad NO se renderiza cuando el estado es TicketMostrado (ahi ocupa
+ *   toda la pantalla el QR); ver `keypadVisible` abajo.
  */
 private val TotemBlue = Color(0xFF1565C0)
 
@@ -119,8 +129,6 @@ fun TotemScreen(
                     error = "No se encontro comensal con RUT $rut en este casino."
                 }
                 c.servicios.isEmpty() -> {
-                    // Sprint 3.2.1: guardamos el comensal para mostrar el card
-                    // "no tiene servicios" en vez de solo un mensaje de error.
                     comensal = c
                     serviciosVisibles = emptyList()
                     estado = EstadoTotem.SinServicios
@@ -143,6 +151,10 @@ fun TotemScreen(
         }
     }
 
+    // Mientras se muestra el ticket con QR el keypad se oculta para dar
+    // todo el espacio vertical al QR (que es lo que mira el comensal).
+    val keypadVisible = estado != EstadoTotem.TicketMostrado
+
     Scaffold(
         containerColor = TotemBlue,
         topBar = {
@@ -161,10 +173,35 @@ fun TotemScreen(
                 colors = topBarColorsFor(TotemBlue),
             )
         },
+        bottomBar = {
+            if (keypadVisible) {
+                // Panel fijo abajo: keypad full-width. NO es scrolleable.
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 8.dp,
+                    shadowElevation = 12.dp,
+                ) {
+                    Box(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
+                        NumericKeypad(
+                            onKeyPress = { ch ->
+                                rut = cl.csae.pos.ui.components.normalizeRutInput(rut + ch)
+                            },
+                            onBackspace = {
+                                if (rut.isNotEmpty()) rut = rut.dropLast(1)
+                            },
+                            enabled = estado == EstadoTotem.Idle || estado == EstadoTotem.Buscando,
+                        )
+                    }
+                }
+            }
+        },
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             Column(
-                modifier = Modifier.fillMaxSize().padding(24.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 24.dp, vertical = 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
@@ -173,8 +210,6 @@ fun TotemScreen(
                     color = Color.White.copy(alpha = 0.9f),
                     fontSize = 18.sp,
                 )
-
-                Spacer(Modifier.height(8.dp))
 
                 when (estado) {
                     EstadoTotem.TicketMostrado -> {
@@ -190,7 +225,7 @@ fun TotemScreen(
                         }
                     }
                     else -> {
-                        // Input RUT grande con auto-formato y boton K
+                        // Input RUT grande SIN keypad embebido (el keypad esta en bottomBar).
                         RutInputField(
                             value = rut,
                             onValueChange = {
@@ -198,13 +233,13 @@ fun TotemScreen(
                                 error = null
                             },
                             label = "Tu RUT",
-                            placeholder = "11.111.111-1",
+                            placeholder = "12.345.678-9",
                             enabled = estado == EstadoTotem.Idle || estado == EstadoTotem.Buscando,
                             isError = error != null,
+                            useCustomKeypad = false,
                             modifier = Modifier.fillMaxWidth(),
                         )
 
-                        // Sprint 3.2.1: feedback visual del servicio.
                         when (estado) {
                             EstadoTotem.SinServicios -> {
                                 comensal?.let { c ->
@@ -314,8 +349,6 @@ fun TotemScreen(
                     }
                 }
 
-                Spacer(Modifier.weight(1f))
-
                 // Indicador ultimo ticket
                 if (estado == EstadoTotem.Idle && ultimosTickets.isNotEmpty()) {
                     Text(
@@ -324,6 +357,10 @@ fun TotemScreen(
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
+
+                // Padding inferior para que el contenido no quede pegado al
+                // keypad cuando se hace scroll hasta el final.
+                Spacer(Modifier.height(8.dp))
             }
         }
     }

@@ -1,15 +1,16 @@
 package cl.csae.pos.ui.screens
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.PointOfSale
 import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.List
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -18,7 +19,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cl.csae.pos.di.ServiceLocator
@@ -27,6 +27,7 @@ import cl.csae.pos.model.Servicio
 import cl.csae.pos.model.Ticket
 import cl.csae.pos.model.UsuarioPos
 import cl.csae.pos.ui.components.CambiarModoTopBar
+import cl.csae.pos.ui.components.NumericKeypad
 import cl.csae.pos.ui.components.RutInputField
 import kotlinx.coroutines.launch
 
@@ -35,18 +36,17 @@ import kotlinx.coroutines.launch
  * Sprint 3.2: teclado numerico en RUT + menu inferior con Consumos / Config.
  * Sprint 3.2.1: RUTInputField con auto-formato + boton K, top bar con
  * "Cambiar modo" hacia mode_select.
+ * Sprint 3.3 (fix UX):
+ * - NumericKeypad en `bottomBar` del Scaffold (panel fijo abajo).
+ * - Todo el contenido (RUT, comensal, servicios, boton GENERAR) scrolleable.
+ * - Navegacion a Consumos / Config movida a la top bar (iconos).
  *
  * Flujo:
- *   1. Operador ingresa RUT del comensal.
+ *   1. Operador ingresa RUT del comensal (teclado en pantalla del bottomBar).
  *   2. La app busca en el catalog cacheado (descargado al login).
  *   3. Operador selecciona servicio habilitado para ese comensal.
  *   4. Boton "Generar ticket" -> `POST /api/v1/pos/consumos` con `IdempotencyKey`.
  *   5. Navega a TicketScreen con el ticket devuelto.
- *
- * Menu inferior:
- *   - "GENERAR" (accion principal, lo que ya hace)
- *   - "CONSUMOS" -> ConsumosScreen
- *   - "CONFIG" -> ConfiguracionScreen
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -123,46 +123,60 @@ fun POSScreen(
     }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             CambiarModoTopBar(
                 title = "POS - Generar Ticket",
                 subtitle = "Operador: ${usuario.displayName}",
                 onCambiarModo = onCambiarModo,
+                actions = {
+                    // Sprint 3.3: navegacion movida del NavigationBar a la top bar.
+                    IconButton(onClick = onIrConsumos) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.List,
+                            contentDescription = "Consumos",
+                        )
+                    }
+                    IconButton(onClick = onIrConfig) {
+                        Icon(
+                            imageVector = Icons.Filled.Settings,
+                            contentDescription = "Configuracion",
+                        )
+                    }
+                },
             )
         },
         bottomBar = {
-            // Menu inferior (sprint 3.2): GENERAR (no es la unica accion visible,
-            // por eso usamos NavigationBar con 3 items).
-            NavigationBar(
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary,
+            // Panel fijo abajo: keypad full-width. NO es scrolleable.
+            // Solo activo cuando no estamos cargando/generando.
+            Surface(
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 8.dp,
+                shadowElevation = 12.dp,
             ) {
-                NavigationBarItem(
-                    selected = true,
-                    onClick = { /* ya estamos aca */ },
-                    icon = { Icon(Icons.Filled.PointOfSale, contentDescription = null) },
-                    label = { Text("GENERAR", fontWeight = FontWeight.Bold) },
-                )
-                NavigationBarItem(
-                    selected = false,
-                    onClick = onIrConsumos,
-                    icon = { Icon(Icons.Filled.List, contentDescription = null) },
-                    label = { Text("CONSUMOS") },
-                )
-                NavigationBarItem(
-                    selected = false,
-                    onClick = onIrConfig,
-                    icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
-                    label = { Text("CONFIG") },
-                )
+                Box(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
+                    NumericKeypad(
+                        onKeyPress = { ch ->
+                            rut = cl.csae.pos.ui.components.normalizeRutInput(rut + ch)
+                        },
+                        onBackspace = {
+                            if (rut.isNotEmpty()) rut = rut.dropLast(1)
+                        },
+                        enabled = !loading,
+                    )
+                }
             }
         },
     ) { padding ->
         Column(
-            modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            // Paso 1: RUT
+            // Paso 1: RUT (sin keypad embebido; el keypad esta en el bottomBar).
             Text("1. RUT del comensal", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             RutInputField(
                 value = rut,
@@ -171,9 +185,10 @@ fun POSScreen(
                     error = null
                 },
                 label = "12345678-5",
-                placeholder = "11.111.111-1",
+                placeholder = "12.345.678-9",
                 enabled = !loading,
                 isError = error != null,
+                useCustomKeypad = false,
                 modifier = Modifier.fillMaxWidth().focusRequester(focusRut),
             )
             Button(
@@ -237,7 +252,6 @@ fun POSScreen(
                         )
                     }
 
-                    Spacer(Modifier.weight(1f))
                     Button(
                         onClick = { generar() },
                         enabled = servicioSeleccionado != null && !loading,
@@ -259,10 +273,17 @@ fun POSScreen(
                     }
                 }
             }
+
+            // Padding inferior para que el contenido no quede pegado al
+            // keypad cuando se hace scroll hasta el final.
+            Spacer(Modifier.height(8.dp))
         }
     }
 
-    LaunchedEffect(Unit) { focusRut.requestFocus() }
+    // No usamos focusRut.requestFocus() porque el RUT se tipea con el keypad
+    // del bottomBar (no con el teclado nativo). Mantengo el FocusRequester
+    // en el codigo por si en el futuro se quiere saltar a teclado nativo.
+    @Suppress("UNUSED_EXPRESSION") focusRut
 }
 
 @Composable
