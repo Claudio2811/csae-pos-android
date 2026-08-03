@@ -16,6 +16,10 @@
     <!-- Mantener pantalla encendida mientras el POS esta activo. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <!-- Camara: escaneo de QR en modo Garzon (sprint 3.2). -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+
     <queries>
         <!-- Bluetooth: listar dispositivos emparejados. -->
         <intent>

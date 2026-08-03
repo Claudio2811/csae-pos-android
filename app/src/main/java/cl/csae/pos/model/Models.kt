@@ -48,6 +48,9 @@ data class Ticket(
     val consumoId: String? = null,
     val ticketId: String? = null,
     val precio: Int = 0,
+    // Sprint 3.2: UUID unico que se imprime como QR en el ticket. El garzon
+    // lo escanea con la camara y la app llama a /pos/tickets/validar.
+    val qrToken: String? = null,
 )
 
 data class Kpi(

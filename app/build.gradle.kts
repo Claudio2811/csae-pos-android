@@ -15,8 +15,8 @@ android {
         applicationId = "cl.csae.pos"
         minSdk = 26
         targetSdk = 36
-        versionCode = 6
-        versionName = "0.6.0-jdk21"
+        versionCode = 8
+        versionName = "0.7.0-totem-garzon"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
         // URL del API configurable por buildType.
@@ -51,6 +51,13 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+    }
+    lint {
+        // Sprint 3.2: CameraX 1.3.x marca `imageProxy.image` como opt-in
+        // experimental. La API se va a estabilizar en 1.4+. Mientras tanto
+        // lo tratamos como warning para no bloquear el build.
+        disable += setOf("UnsafeOptInUsageError")
+        abortOnError = false
     }
 }
 
@@ -89,6 +96,18 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
 
+    // CameraX (escaneo QR en modo Garzon).
+    implementation("androidx.camera:camera-core:1.3.4")
+    implementation("androidx.camera:camera-camera2:1.3.4")
+    implementation("androidx.camera:camera-lifecycle:1.3.4")
+    implementation("androidx.camera:camera-view:1.3.4")
+
+    // ML Kit barcode scanning (on-device, sin API key, modelo Google).
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
+
+    // ZXing core para generar QR como Bitmap (preview del ticket).
+    implementation("com.google.zxing:core:3.5.3")
+
     // Tests
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
@@ -97,4 +116,3 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
-

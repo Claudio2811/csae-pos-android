@@ -97,6 +97,7 @@ data class RegistrarConsumoResponseDto(
     val fechaConsumoUtc: String,
     val ticketId: String? = null,
     val ticketNumero: String? = null,
+    @SerialName("qrToken") val qrToken: String? = null,
     val observaciones: String? = null,
     val idempotente: Boolean = false,
 )
@@ -104,4 +105,71 @@ data class RegistrarConsumoResponseDto(
 @Serializable
 data class MarcarTicketImpresoRequestDto(
     val numeroSerieImpresora: String? = null,
+)
+
+// ============= CONSUMO LISTADO (sprint 3.2) =============
+
+/**
+ * GET /api/v1/pos/consumos?desde=YYYY-MM-DDT00:00:00Z&pageSize=500
+ * Cada item es un consumo del turno actual con datos desnormalizados.
+ */
+@Serializable
+data class ConsumoListItemDto(
+    val consumoId: String,
+    val ticketId: String? = null,
+    val ticketNumero: String? = null,
+    val qrToken: String? = null,
+    val fechaConsumoUtc: String,
+    val comensalRut: String,
+    val comensalNombre: String,
+    val servicioNombre: String,
+    val precioClp: Int,
+)
+
+@Serializable
+data class ConsumosListResponseDto(
+    val items: List<ConsumoListItemDto>,
+    val total: Int,
+    val page: Int,
+    val pageSize: Int,
+)
+
+// ============= TICKET VALIDAR / CONSUMIR (sprint 3.2) =============
+// Usado por modo Garzon: el garzon escanea el QR del comensal y el backend
+// responde si el ticket es valido, ya fue consumido, o no existe.
+
+@Serializable
+data class ValidarTicketRequest(
+    val qrToken: String,
+)
+
+@Serializable
+data class ValidarTicketResponse(
+    val valido: Boolean,
+    val mensaje: String,
+    val ticket: TicketInfoDto? = null,
+)
+
+@Serializable
+data class ConsumirTicketRequest(
+    val qrToken: String,
+)
+
+@Serializable
+data class ConsumirTicketResponse(
+    val ok: Boolean,
+    val mensaje: String,
+    val consumidoEnUtc: String? = null,
+)
+
+@Serializable
+data class TicketInfoDto(
+    val ticketId: String,
+    val qrToken: String,
+    val numero: String,
+    val comensalRut: String,
+    val comensalNombre: String,
+    val servicioNombre: String,
+    val generadoUtc: String,
+    val consumidoEnUtc: String? = null,
 )

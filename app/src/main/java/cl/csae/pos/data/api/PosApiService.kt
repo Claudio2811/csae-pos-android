@@ -38,4 +38,24 @@ interface PosApiService {
         @Path("id") ticketId: String,
         @Body body: MarcarTicketImpresoRequestDto,
     ): Response<Unit>
+
+    // ============= CONSUMO LISTADO (sprint 3.2) =============
+
+    /**
+     * Lista los consumos desde una fecha en UTC. Usado por ConsumosScreen
+     * para mostrar el turno actual (desde 00:00 UTC de hoy).
+     */
+    @GET("api/v1/pos/consumos")
+    suspend fun listarConsumos(
+        @Query("desde") desdeUtc: String,
+        @Query("pageSize") pageSize: Int = 500,
+    ): Response<ConsumosListResponseDto>
+
+    // ============= TICKET VALIDAR / CONSUMIR (sprint 3.2, modo Garzon) =============
+
+    @POST("api/v1/pos/tickets/validar")
+    suspend fun validarTicket(@Body req: ValidarTicketRequest): Response<ValidarTicketResponse>
+
+    @POST("api/v1/pos/tickets/consumir")
+    suspend fun consumirTicket(@Body req: ConsumirTicketRequest): Response<ConsumirTicketResponse>
 }

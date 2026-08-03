@@ -10,6 +10,7 @@ import cl.csae.pos.data.repository.AuthRepository
 import cl.csae.pos.data.repository.CatalogRepository
 import cl.csae.pos.data.repository.ConsumoRepository
 import cl.csae.pos.data.repository.TicketCacheRepository
+import cl.csae.pos.data.repository.TicketValidarRepository
 
 /**
  * ServiceLocator: punto unico de acceso a las dependencias de la app.
@@ -39,6 +40,8 @@ object ServiceLocator {
     val catalogRepo: CatalogRepository by lazy { CatalogRepository(posApiService) }
 
     val consumoRepo: ConsumoRepository by lazy { ConsumoRepository(posApiService, catalogRepo) }
+
+    val ticketValidarRepo: TicketValidarRepository by lazy { TicketValidarRepository(posApiService) }
 
     val ticketCache: TicketCacheRepository by lazy { TicketCacheRepository() }
 

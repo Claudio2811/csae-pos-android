@@ -6,8 +6,11 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PointOfSale
 import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.List
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -28,6 +31,7 @@ import kotlinx.coroutines.launch
 
 /**
  * Pantalla principal del POS. Sprint 3.1.2: contra la API real.
+ * Sprint 3.2: teclado numerico en RUT + menu inferior con Consumos / Config.
  *
  * Flujo:
  *   1. Operador ingresa RUT del comensal.
@@ -35,6 +39,11 @@ import kotlinx.coroutines.launch
  *   3. Operador selecciona servicio habilitado para ese comensal.
  *   4. Boton "Generar ticket" -> `POST /api/v1/pos/consumos` con `IdempotencyKey`.
  *   5. Navega a TicketScreen con el ticket devuelto.
+ *
+ * Menu inferior:
+ *   - "GENERAR" (accion principal, lo que ya hace)
+ *   - "CONSUMOS" -> ConsumosScreen
+ *   - "CONFIG" -> ConfiguracionScreen
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -42,6 +51,8 @@ fun POSScreen(
     usuario: UsuarioPos,
     onBack: () -> Unit,
     onTicketGenerado: (Ticket) -> Unit,
+    onIrConsumos: () -> Unit = {},
+    onIrConfig: () -> Unit = {},
 ) {
     var rut by remember { mutableStateOf("") }
     var comensal by remember { mutableStateOf<Comensal?>(null) }
@@ -111,7 +122,7 @@ fun POSScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Generar Ticket") },
+                title = { Text("POS - Generar Ticket") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver")
@@ -124,6 +135,33 @@ fun POSScreen(
                 ),
             )
         },
+        bottomBar = {
+            // Menu inferior (sprint 3.2): GENERAR (no es la unica accion visible,
+            // por eso usamos NavigationBar con 3 items).
+            NavigationBar(
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+            ) {
+                NavigationBarItem(
+                    selected = true,
+                    onClick = { /* ya estamos aca */ },
+                    icon = { Icon(Icons.Filled.PointOfSale, contentDescription = null) },
+                    label = { Text("GENERAR", fontWeight = FontWeight.Bold) },
+                )
+                NavigationBarItem(
+                    selected = false,
+                    onClick = onIrConsumos,
+                    icon = { Icon(Icons.Filled.List, contentDescription = null) },
+                    label = { Text("CONSUMOS") },
+                )
+                NavigationBarItem(
+                    selected = false,
+                    onClick = onIrConfig,
+                    icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
+                    label = { Text("CONFIG") },
+                )
+            }
+        },
     ) { padding ->
         Column(
             modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
@@ -133,13 +171,18 @@ fun POSScreen(
             Text("1. RUT del comensal", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             OutlinedTextField(
                 value = rut,
-                onValueChange = { rut = it; error = null },
+                onValueChange = { v ->
+                    // Sprint 3.2: solo [0-9Kk.-], sin espacios ni letras, teclado numerico nativo.
+                    val filtrado = v.filter { it.isDigit() || it == '-' || it == '.' || it == 'k' || it == 'K' }
+                    rut = filtrado
+                    error = null
+                },
                 label = { Text("12345678-5") },
                 singleLine = true,
                 enabled = !loading,
                 modifier = Modifier.fillMaxWidth().focusRequester(focusRut),
                 keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Text,
+                    keyboardType = KeyboardType.Number,
                     imeAction = ImeAction.Search,
                 ),
                 keyboardActions = KeyboardActions(onSearch = { buscar() }),
@@ -204,7 +247,6 @@ fun POSScreen(
                         )
                     }
 
-                    // Paso 4: generar
                     Spacer(Modifier.weight(1f))
                     Button(
                         onClick = { generar() },

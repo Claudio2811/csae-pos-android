@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -15,6 +16,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -34,6 +36,10 @@ import kotlinx.coroutines.launch
  *   - Volver al dashboard.
  *
  * En modo kiosko, despues de 10s sin accion, vuelve automaticamente al POS.
+ *
+ * Sprint 3.2: si el Ticket tiene qrToken (lo emite el backend en la
+ * respuesta de registrar consumo), muestra un QR generado con ZXing y lo
+ * envia a la impresora termica via `imprimirTicketConQr`.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -154,6 +160,32 @@ fun TicketScreen(
                     Text("Precio: $${ticket.precio.takeIf { it > 0 } ?: ticket.servicio.precio}", fontSize = 18.sp, fontWeight = FontWeight.Bold)
                     Text("---", modifier = Modifier.padding(vertical = 4.dp))
                     Text("Operador: ${ticket.operador}", style = MaterialTheme.typography.bodySmall)
+
+                    // Sprint 3.2: QR generado con ZXing. El qrToken viene del
+                    // backend (en RegistrarConsumoResponseDto.qrToken) y se mapea
+                    // al campo `qrToken` del Ticket local en ConsumoRepository.
+                    // Si el ticket no tiene qrToken (caso raro: tickets viejos
+                    // generados antes del Sprint 3.2), usamos uno sintetico como
+                    // fallback para no romper el preview.
+                    val qrToken = ticket.qrToken
+                        ?: "CSAE-${ticket.numero}-${ticket.comensal.rut}"
+                    val qrBitmap = remember(qrToken) {
+                        ServiceLocator.printerService.generarQrBitmap(qrToken, sizePx = 384)
+                    }
+                    qrBitmap?.let { bmp ->
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Escanea para validar",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Image(
+                            bitmap = bmp.asImageBitmap(),
+                            contentDescription = "QR del ticket",
+                            modifier = Modifier.size(180.dp),
+                        )
+                    }
                 }
             }
 
@@ -196,7 +228,16 @@ fun TicketScreen(
                 showPrinterDialog = false
                 printing = true
                 scope.launch {
-                    val r = ServiceLocator.printerService.imprimir(device.address, ticket)
+                    // Sprint 3.2: usar imprimirTicketConQr con el qrToken real
+                    // del backend (en ticket.qrToken). Fallback al sintetico si
+                    // el ticket no tiene qrToken (tickets pre-Sprint-3.2).
+                    val qrToken = ticket.qrToken
+                        ?: "CSAE-${ticket.numero}-${ticket.comensal.rut}"
+                    val r = ServiceLocator.printerService.imprimirTicketConQr(
+                        deviceAddress = device.address,
+                        ticket = ticket,
+                        qrToken = qrToken,
+                    )
                     // Independientemente del resultado de la impresion fisica,
                     // marcamos el ticket como impreso en el backend.
                     ticket.ticketId?.let { id ->
@@ -212,7 +253,7 @@ fun TicketScreen(
 }
 
 @Composable
-private fun PrinterPickerDialog(
+fun PrinterPickerDialog(
     onDismiss: () -> Unit,
     onSelect: (BluetoothDevice) -> Unit,
 ) {

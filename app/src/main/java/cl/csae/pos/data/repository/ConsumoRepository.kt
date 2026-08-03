@@ -1,6 +1,7 @@
 package cl.csae.pos.data.repository
 
 import cl.csae.pos.data.api.ApiError
+import cl.csae.pos.data.api.ConsumoListItemDto
 import cl.csae.pos.data.api.MarcarTicketImpresoRequestDto
 import cl.csae.pos.data.api.PosApiService
 import cl.csae.pos.data.api.RegistrarConsumoRequestDto
@@ -12,6 +13,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import retrofit2.Response
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
@@ -99,6 +101,7 @@ class ConsumoRepository(
                     consumoId = body.consumoId,
                     ticketId = body.ticketId,
                     precio = body.precioClp,
+                    qrToken = body.qrToken,
                 )
             )
         } catch (t: Throwable) {
@@ -118,6 +121,34 @@ class ConsumoRepository(
         } catch (t: Throwable) {
             Result.failure(t)
         }
+    }
+
+    /**
+     * Lista los consumos del turno actual: desde 00:00:00 UTC de hoy.
+     * Usado por [ConsumosScreen] (sprint 3.2).
+     */
+    suspend fun listarConsumosDelTurno(): Result<List<ConsumoListItemDto>> {
+        return try {
+            val desdeUtc = hoyUtcMedianoche()
+            val resp = api.listarConsumos(desdeUtc, pageSize = 500)
+            if (!resp.isSuccessful) {
+                val msg = parseError(resp.errorBody()?.string(), resp.code())
+                return Result.failure(IllegalStateException(msg))
+            }
+            val body = resp.body() ?: return Result.failure(IllegalStateException("Respuesta vacia del API."))
+            Result.success(body.items)
+        } catch (t: Throwable) {
+            Result.failure(t)
+        }
+    }
+
+    private fun hoyUtcMedianoche(): String {
+        val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
+        cal.set(Calendar.HOUR_OF_DAY, 0)
+        cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0)
+        cal.set(Calendar.MILLISECOND, 0)
+        return isoUtc.format(cal.time)
     }
 
     private fun generarIdempotencyKey(fecha: Date): String {

@@ -12,6 +12,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -31,12 +32,23 @@ import kotlinx.coroutines.launch
  *
  * Despues del login se dispara `catalogRepo.refresh()` para bajar el catalog
  * completo (empresas, servicios, comensales) que se usara en el POS.
+ *
+ * Sprint 3.2: la pantalla es reutilizada por modo Garzon (header "Modo Garzon")
+ * y modo TOTEM (header "Modo Totem", con un campo RUT adicional que NO se usa
+ * para login del operador, queda como nota de UI).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LoginScreen(onLoginOk: (UsuarioPos) -> Unit) {
+fun LoginScreen(
+    onLoginOk: (UsuarioPos) -> Unit,
+    headerTitle: String = "CSAE POS",
+    headerSubtitle: String = "Control de Servicios de Alimentacion",
+    brandColor: Color? = null,
+) {
+    val effectiveBrand = brandColor ?: MaterialTheme.colorScheme.primary
     var email by remember { mutableStateOf("admin@casino-demo.cl") }
     var password by remember { mutableStateOf("Demo123!") }
+    var rutOperador by remember { mutableStateOf("") }
     var showPassword by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(false) }
@@ -72,23 +84,23 @@ fun LoginScreen(onLoginOk: (UsuarioPos) -> Unit) {
         }
     }
 
-    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.primary) {
+    Surface(modifier = Modifier.fillMaxSize(), color = effectiveBrand) {
         Column(
             modifier = Modifier.fillMaxSize().padding(32.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
             Text(
-                text = "CSAE POS",
-                fontSize = 56.sp,
+                text = headerTitle,
+                fontSize = 48.sp,
                 fontWeight = FontWeight.ExtraBold,
-                color = MaterialTheme.colorScheme.onPrimary,
+                color = Color.White,
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                text = "Control de Servicios de Alimentacion",
-                fontSize = 18.sp,
-                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f),
+                text = headerSubtitle,
+                fontSize = 16.sp,
+                color = Color.White.copy(alpha = 0.85f),
             )
             Spacer(Modifier.height(48.dp))
 
@@ -112,6 +124,28 @@ fun LoginScreen(onLoginOk: (UsuarioPos) -> Unit) {
                         modifier = Modifier.fillMaxWidth().focusRequester(focus),
                         keyboardOptions = KeyboardOptions(
                             keyboardType = KeyboardType.Email,
+                            imeAction = ImeAction.Next,
+                        ),
+                    )
+
+                    // RUT del operador (opcional, sprint 3.2). El tótem no requiere
+                    // login, pero dejamos el campo en LoginScreen con teclado
+                    // numérico por si después se usa para auditoría del operador.
+                    OutlinedTextField(
+                        value = rutOperador,
+                        onValueChange = { v ->
+                            // Acepta solo [0-9Kk.-], sin espacios ni letras.
+                            val filtrado = v.filter { it.isDigit() || it == '-' || it == '.' || it == 'k' || it == 'K' }
+                            rutOperador = filtrado
+                            error = null
+                        },
+                        label = { Text("RUT (opcional)") },
+                        placeholder = { Text("12345678-5") },
+                        singleLine = true,
+                        enabled = !loading,
+                        modifier = Modifier.fillMaxWidth(),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Number,
                             imeAction = ImeAction.Next,
                         ),
                     )
