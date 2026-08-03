@@ -55,14 +55,17 @@ fun CsaeNavHost() {
         { nav.navigate(Routes.MODE_SELECT) { popUpTo(0) { inclusive = true } } }
     }
 
-    // Sprint 3.2: decidir start destination segun modoPreferido + isLoggedIn.
+    // Sprint 3.3: decidir start destination. Login primero SIEMPRE, salvo
+    // que el usuario ya este logueado. Asi la app sabe casino + sucursal
+    // + quien es desde el primer tap (trazabilidad completa).
     LaunchedEffect(Unit) {
         val modo = ServiceLocator.authStore.getModoPreferido()
         val isLoggedIn = ServiceLocator.authRepo.isLoggedIn.first()
         startRoute = when {
-            modo == "TOTEM" && isLoggedIn -> Routes.TOTEM
-            modo == "POS" && isLoggedIn -> Routes.DASHBOARD
-            modo == "GARZON" && isLoggedIn -> Routes.GARZON
+            !isLoggedIn -> Routes.LOGIN
+            modo == "TOTEM" -> Routes.TOTEM
+            modo == "POS" -> Routes.DASHBOARD
+            modo == "GARZON" -> Routes.GARZON
             else -> Routes.MODE_SELECT
         }
     }
@@ -146,12 +149,15 @@ fun CsaeNavHost() {
         }
 
         // ====== Login (modo POS, branding verde) ======
+        // Sprint 3.3: el login exitoso va al selector de modo (no directo al
+        // dashboard). Asi el usuario elige TOTEM / POS / GARZON despues de
+        // autenticarse, y la trazabilidad se mantiene (siempre sabemos quien es).
         composable(Routes.LOGIN) {
             LoginScreen(
                 onLoginOk = { u ->
                     usuario = u
-                    nav.navigate(Routes.DASHBOARD) {
-                        popUpTo(Routes.MODE_SELECT) { inclusive = true }
+                    nav.navigate(Routes.MODE_SELECT) {
+                        popUpTo(Routes.LOGIN) { inclusive = true }
                     }
                 },
                 headerTitle = "CSAE POS",
