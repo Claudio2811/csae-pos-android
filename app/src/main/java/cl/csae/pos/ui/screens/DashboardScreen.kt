@@ -113,10 +113,10 @@ fun DashboardScreen(
                 Text("GENERAR TICKET", fontSize = 24.sp, fontWeight = FontWeight.Bold)
             }
 
-            if (refreshError != null) {
+            refreshError?.let { msg ->
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
                     Text(
-                        refreshError!!,
+                        msg,
                         modifier = Modifier.padding(12.dp),
                         color = MaterialTheme.colorScheme.onErrorContainer,
                         style = MaterialTheme.typography.bodySmall,

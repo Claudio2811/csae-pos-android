@@ -157,10 +157,10 @@ fun POSScreen(
                 Text("Buscar comensal")
             }
 
-            if (error != null) {
+            error?.let { msg ->
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
                     Text(
-                        error!!,
+                        msg,
                         modifier = Modifier.padding(12.dp),
                         color = MaterialTheme.colorScheme.onErrorContainer,
                     )

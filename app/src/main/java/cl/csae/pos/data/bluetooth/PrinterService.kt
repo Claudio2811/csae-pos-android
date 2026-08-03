@@ -58,6 +58,7 @@ class PrinterService(private val context: Context) {
         var socket: BluetoothSocket? = null
         try {
             socket = createSocket(device)
+            socket.connect() // Conectar antes de obtener el output stream
             val out = socket.outputStream
             enviarTicketEscPos(out, ticket)
             out.flush()

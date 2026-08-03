@@ -1,5 +1,6 @@
 package cl.csae.pos.data.api
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 // ============= CATALOG =============
@@ -35,7 +36,10 @@ data class ServicioHabilitadoCatalogItemDto(
     val empresaRestauranteId: String,
     val servicioId: String,
     val precioClp: Int,
-    val precioIva: Int,
+    // El backend envia 'precioIvaClp' (con C mayuscula + Clp al final).
+    // Para no chocar con futuras convenciones C# (xxxClp), lo aceptamos
+    // como nullable con default 0.
+    @SerialName("precioIvaClp") val precioIva: Int = 0,
 )
 
 @Serializable

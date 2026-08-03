@@ -30,7 +30,9 @@ class TicketCacheRepository {
 
     fun total(): Int = _tickets.value.size
 
-    fun montoTotalClp(): Int = _tickets.value.sumOf { it.servicio.precio }
+    fun montoTotalClp(): Int = _tickets.value.sumOf {
+        if (it.precio > 0) it.precio else it.servicio.precio
+    }
 
     fun comensalesUnicos(): Int = _tickets.value.map { it.comensal.id }.distinct().size
 

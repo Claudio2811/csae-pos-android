@@ -139,9 +139,9 @@ fun LoginScreen(onLoginOk: (UsuarioPos) -> Unit) {
                         },
                     )
 
-                    if (error != null) {
+                    error?.let { msg ->
                         Text(
-                            error!!,
+                            msg,
                             color = MaterialTheme.colorScheme.error,
                             style = MaterialTheme.typography.bodyMedium,
                         )

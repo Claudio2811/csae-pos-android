@@ -72,15 +72,21 @@ class ConsumoRepository(
                 return Result.failure(IllegalStateException(msg))
             }
             val body = resp.body() ?: return Result.failure(IllegalStateException("Respuesta vacia del API."))
+
+            // Para el ticket local, necesitamos los datos del comensal. Los tenemos
+            // en el cache del catalog. Si no esta, intentamos re-bajarlo una vez.
+            var comensal = catalog.buscarComensalPorId(body.comensalId)
+            if (comensal == null) {
+                catalog.refresh().getOrNull()
+                comensal = catalog.buscarComensalPorId(body.comensalId)
+            }
+
+            if (comensal == null) {
+                throw IllegalStateException("Comensal no esta en el catalog. Re-sincroniza.")
+            }
+
             val ticketNumero = body.ticketNumero
                 ?: generarNumeroLocal(ahora) // fallback si el server no devuelve ticket
-            val c = catalog.buscarComensalPorId(body.comensalId) ?: catalog.getOrLoad().getOrNull()?.let {
-                catalog.buscarComensalPorId(body.comensalId)
-            }
-            // Para el ticket local, necesitamos los datos del comensal. Los tenemos
-            // en el cache del catalog (si lo buscamos por membresiaId o comensalId).
-            val comensal = catalog.buscarComensalPorId(body.comensalId)
-                ?: throw IllegalStateException("Comensal no esta en el catalog. Re-sincroniza.")
             val servicio = comensal.servicios.firstOrNull { it.id == body.servicioId }
                 ?: Servicio(body.servicioId, "(servicio)", "?", body.precioClp)
             Result.success(
