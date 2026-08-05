@@ -15,8 +15,8 @@ android {
         applicationId = "cl.csae.pos"
         minSdk = 26
         targetSdk = 36
-        versionCode = 11
-        versionName = "0.7.3-clean-login"
+        versionCode = 12
+        versionName = "0.7.4-sprint34-fechas"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
         // URL del API configurable por buildType.

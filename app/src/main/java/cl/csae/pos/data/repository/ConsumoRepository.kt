@@ -125,12 +125,27 @@ class ConsumoRepository(
 
     /**
      * Lista los consumos del turno actual: desde 00:00:00 UTC de hoy.
-     * Usado por [ConsumosScreen] (sprint 3.2).
+     * Usado por [ConsumosScreen] cuando no se especifica un rango (Sprint 3.2).
      */
     suspend fun listarConsumosDelTurno(): Result<List<ConsumoListItemDto>> {
+        return listarConsumosEnRango(desdeUtc = hoyUtcMedianoche(), hastaUtc = null)
+    }
+
+    /**
+     * Sprint 3.4: lista los consumos en un rango UTC. Si hastaUtc es null,
+     * el backend no filtra上限 (devuelve todo desde desdeUtc en adelante).
+     * Si ambos son null, devuelve TODOS los consumos del casino.
+     */
+    suspend fun listarConsumosEnRango(
+        desdeUtc: String? = null,
+        hastaUtc: String? = null,
+    ): Result<List<ConsumoListItemDto>> {
         return try {
-            val desdeUtc = hoyUtcMedianoche()
-            val resp = api.listarConsumos(desdeUtc, pageSize = 500)
+            val resp = api.listarConsumos(
+                desdeUtc = desdeUtc,
+                hastaUtc = hastaUtc,
+                pageSize = 500,
+            )
             if (!resp.isSuccessful) {
                 val msg = parseError(resp.errorBody()?.string(), resp.code())
                 return Result.failure(IllegalStateException(msg))
@@ -141,6 +156,12 @@ class ConsumoRepository(
             Result.failure(t)
         }
     }
+
+    /**
+     * Helper: convierte una fecha local (Date) a string ISO 8601 UTC para
+     * enviar como param `desde` / `hasta` al backend.
+     */
+    fun toIsoUtc(d: Date): String = isoUtc.format(d)
 
     private fun hoyUtcMedianoche(): String {
         val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"))

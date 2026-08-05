@@ -16,16 +16,20 @@ import cl.csae.pos.data.api.ConsumoListItemDto
 import cl.csae.pos.di.ServiceLocator
 import cl.csae.pos.ui.components.CambiarModoTopBar
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 
 /**
- * Pantalla de Consumos del turno actual (sprint 3.2).
+ * Pantalla de Consumos (Sprint 3.2 + 3.4).
  *
- * Llama a `GET /api/v1/pos/consumos?desde=<UTC medianoche>&pageSize=500` y
- * muestra cada consumo con: hora (CL), RUT, nombre, servicio, precio CLP.
+ * Sprint 3.2: muestra los consumos del turno actual (desde 00:00 UTC de hoy).
  *
- * Al final del dia hay un boton "Cerrar turno" como placeholder (sprint 3.2
- * no implementa el cierre real: eso queda para v1.2 con el backoffice de
- * facturacion).
+ * Sprint 3.4: ahora permite filtrar por rango de fechas con 2 DatePicker.
+ * Default: hoy (desde=hasta=00:00 local).
+ * Chips rapidos: Hoy, Ayer, Ultimos 7 dias, Ultimo mes.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -38,11 +42,26 @@ fun ConsumosScreen(
     var error by remember { mutableStateOf<String?>(null) }
     var showCerrarDialog by remember { mutableStateOf(false) }
 
+    // Sprint 3.4: rango de fechas. Default = hoy (en timezone local).
+    var desdeDate by remember { mutableStateOf(onlyDate(hoyLocal())) }
+    var hastaDate by remember { mutableStateOf(onlyDate(hoyLocal())) }
+    // DatePickerDialog state
+    var showDesdePicker by remember { mutableStateOf(false) }
+    var showHastaPicker by remember { mutableStateOf(false) }
+
     fun cargar() {
         loading = true
         error = null
         scope.launch {
-            val r = ServiceLocator.consumoRepo.listarConsumosDelTurno()
+            val desdeUtc = startOfDayUtc(desdeDate)
+            val hastaUtc = startOfDayUtc(hastaDate) + 24 * 60 * 60 * 1000 // +1 dia exclusivo
+            val fmt = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
+                timeZone = TimeZone.getTimeZone("UTC")
+            }
+            val r = ServiceLocator.consumoRepo.listarConsumosEnRango(
+                desdeUtc = fmt.format(Date(desdeUtc)),
+                hastaUtc = fmt.format(Date(hastaUtc)),
+            )
             loading = false
             r.onSuccess { consumos = it }
              .onFailure { error = it.message ?: "Error cargando consumos" }
@@ -52,11 +71,12 @@ fun ConsumosScreen(
     LaunchedEffect(Unit) { cargar() }
 
     val totalClp = consumos.sumOf { it.precioClp }
+    val fmtChip = SimpleDateFormat("dd-MM-yyyy", Locale("es", "CL"))
 
     Scaffold(
         topBar = {
             CambiarModoTopBar(
-                title = "Consumos del turno",
+                title = "Consumos",
                 onCambiarModo = onCambiarModo,
                 actions = {
                     IconButton(onClick = { cargar() }, enabled = !loading) {
@@ -80,7 +100,7 @@ fun ConsumosScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Total consumos", style = MaterialTheme.typography.bodySmall)
+                        Text("Total (${consumos.size} servicios)", style = MaterialTheme.typography.bodySmall)
                         Text(
                             "$${totalClp} CLP",
                             fontSize = 22.sp,
@@ -98,6 +118,74 @@ fun ConsumosScreen(
         },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+            // Filtro rango de fechas
+            Surface(
+                tonalElevation = 1.dp,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedButton(
+                            onClick = { showDesdePicker = true },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("Desde: ${fmtChip.format(desdeDate)}")
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        OutlinedButton(
+                            onClick = { showHastaPicker = true },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("Hasta: ${fmtChip.format(hastaDate)}")
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        FilledIconButton(onClick = { cargar() }, enabled = !loading) {
+                            Icon(Icons.Filled.Refresh, contentDescription = "Filtrar")
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        AssistChip(
+                            onClick = {
+                                val h = hoyLocal()
+                                desdeDate = onlyDate(h)
+                                hastaDate = onlyDate(h)
+                                cargar()
+                            },
+                            label = { Text("Hoy") },
+                        )
+                        AssistChip(
+                            onClick = {
+                                val a = onlyDate(hoyLocal()).time - 24 * 60 * 60 * 1000
+                                desdeDate = Date(a)
+                                hastaDate = Date(a)
+                                cargar()
+                            },
+                            label = { Text("Ayer") },
+                        )
+                        AssistChip(
+                            onClick = {
+                                val h = hoyLocal()
+                                desdeDate = Date(onlyDate(h).time - 6L * 24 * 60 * 60 * 1000)
+                                hastaDate = onlyDate(h)
+                                cargar()
+                            },
+                            label = { Text("7 dias") },
+                        )
+                        AssistChip(
+                            onClick = {
+                                val cal = Calendar.getInstance()
+                                cal.add(Calendar.MONTH, -1)
+                                desdeDate = onlyDate(cal.time)
+                                hastaDate = onlyDate(hoyLocal())
+                                cargar()
+                            },
+                            label = { Text("1 mes") },
+                        )
+                    }
+                }
+            }
+
             error?.let { msg ->
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(16.dp),
@@ -117,7 +205,7 @@ fun ConsumosScreen(
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        "No hay consumos en el turno actual.",
+                        "No hay consumos en el rango seleccionado.",
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                     )
@@ -132,6 +220,52 @@ fun ConsumosScreen(
                     }
                 }
             }
+        }
+    }
+
+    // DatePickerDialogs
+    if (showDesdePicker) {
+        val state = rememberDatePickerState(
+            initialSelectedDateMillis = desdeDate.time,
+        )
+        DatePickerDialog(
+            onDismissRequest = { showDesdePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    state.selectedDateMillis?.let { millis ->
+                        desdeDate = onlyDate(Date(millis))
+                    }
+                    showDesdePicker = false
+                    cargar()
+                }) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDesdePicker = false }) { Text("Cancelar") }
+            },
+        ) {
+            DatePicker(state = state)
+        }
+    }
+    if (showHastaPicker) {
+        val state = rememberDatePickerState(
+            initialSelectedDateMillis = hastaDate.time,
+        )
+        DatePickerDialog(
+            onDismissRequest = { showHastaPicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    state.selectedDateMillis?.let { millis ->
+                        hastaDate = onlyDate(Date(millis))
+                    }
+                    showHastaPicker = false
+                    cargar()
+                }) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showHastaPicker = false }) { Text("Cancelar") }
+            },
+        ) {
+            DatePicker(state = state)
         }
     }
 
@@ -192,4 +326,35 @@ private fun ConsumoRow(c: ConsumoListItemDto) {
             )
         }
     }
+}
+
+// ============= Helpers locales (no agregan dependencias) =============
+
+private fun hoyLocal(): Date = Calendar.getInstance().time
+
+/** Trunca a inicio del dia LOCAL (00:00:00). */
+private fun onlyDate(d: Date): Date {
+    val cal = Calendar.getInstance()
+    cal.time = d
+    cal.set(Calendar.HOUR_OF_DAY, 0)
+    cal.set(Calendar.MINUTE, 0)
+    cal.set(Calendar.SECOND, 0)
+    cal.set(Calendar.MILLISECOND, 0)
+    return cal.time
+}
+
+/** Devuelve el epoch ms del inicio del dia d en timezone UTC. */
+private fun startOfDayUtc(d: Date): Long {
+    val local = onlyDate(d)
+    val calLocal = Calendar.getInstance().apply { time = local }
+    val calUtc = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+        set(
+            calLocal.get(Calendar.YEAR),
+            calLocal.get(Calendar.MONTH),
+            calLocal.get(Calendar.DAY_OF_MONTH),
+            0, 0, 0,
+        )
+        set(Calendar.MILLISECOND, 0)
+    }
+    return calUtc.timeInMillis
 }

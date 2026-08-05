@@ -42,12 +42,16 @@ interface PosApiService {
     // ============= CONSUMO LISTADO (sprint 3.2) =============
 
     /**
-     * Lista los consumos desde una fecha en UTC. Usado por ConsumosScreen
-     * para mostrar el turno actual (desde 00:00 UTC de hoy).
+     * Lista los consumos en un rango de fechas UTC. Usado por ConsumosScreen
+     * para mostrar el turno actual (Sprint 3.2) o un rango historico
+     * (Sprint 3.4).
+     * - desdeUtc: inicio (inclusivo). Si null, el backend no filtra下限.
+     * - hastaUtc: fin (exclusivo). Si null, el backend no filtra上限.
      */
     @GET("api/v1/pos/consumos")
     suspend fun listarConsumos(
-        @Query("desde") desdeUtc: String,
+        @Query("desde") desdeUtc: String? = null,
+        @Query("hasta") hastaUtc: String? = null,
         @Query("pageSize") pageSize: Int = 500,
     ): Response<ConsumosListResponseDto>
 
