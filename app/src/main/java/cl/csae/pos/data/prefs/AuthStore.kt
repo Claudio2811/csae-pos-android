@@ -60,6 +60,17 @@ class AuthStore(private val context: Context) {
     val casinoColorAcento: Flow<String?> = context.authDataStore.data.map { it[KEY_CASINO_COLOR_ACENTO] }
     val casinoLogoUrl: Flow<String?> = context.authDataStore.data.map { it[KEY_CASINO_LOGO_URL] }
 
+    // ===== F19: Dispositivo POS seleccionado =====
+    // A diferencia del casino y la sucursal (que viven en el JWT), el dispositivo
+    // POS es una eleccion LOCAL del operador: que dispositivo fisico esta usando.
+    // Se persiste en DataStore (equivalente al localStorage de la web) y vive
+    // en memoria via DispositivoPosActual (singleton en ServiceLocator).
+    // El patron es el mismo que la web: DispositivoPosActual.cs (Sprint 5.4).
+    val dispositivoId: Flow<String?> = context.authDataStore.data.map { it[KEY_DISPOSITIVO_ID] }
+    val dispositivoNombre: Flow<String?> = context.authDataStore.data.map { it[KEY_DISPOSITIVO_NOMBRE] }
+    val dispositivoCodigo: Flow<String?> = context.authDataStore.data.map { it[KEY_DISPOSITIVO_CODIGO] }
+    val dispositivoTipo: Flow<Int?> = context.authDataStore.data.map { it[KEY_DISPOSITIVO_TIPO] }
+
     suspend fun getToken(): String? = context.authDataStore.data.first()[KEY_TOKEN]
 
     suspend fun getModoPreferido(): String? = context.authDataStore.data.first()[KEY_MODO_PREFERIDO]
@@ -154,6 +165,48 @@ class AuthStore(private val context: Context) {
         clear()
     }
 
+    /**
+     * F19: persiste el dispositivo POS seleccionado. Llamado desde
+     * [cl.csae.pos.data.selection.DispositivoPosActual.SetAsync] cuando el
+     * operador elige un dispositivo (vía UI) o cuando se reconcilia con la
+     * lista del casino al login.
+     *
+     * Si los parametros son null, se borran los 4 campos (clearDispositivo).
+     */
+    suspend fun setDispositivo(
+        id: String?,
+        nombre: String?,
+        codigo: String?,
+        tipo: Int?,
+    ) {
+        context.authDataStore.edit { prefs ->
+            if (id == null) {
+                prefs.remove(KEY_DISPOSITIVO_ID)
+                prefs.remove(KEY_DISPOSITIVO_NOMBRE)
+                prefs.remove(KEY_DISPOSITIVO_CODIGO)
+                prefs.remove(KEY_DISPOSITIVO_TIPO)
+            } else {
+                prefs[KEY_DISPOSITIVO_ID] = id
+                if (nombre != null) prefs[KEY_DISPOSITIVO_NOMBRE] = nombre
+                if (codigo != null) prefs[KEY_DISPOSITIVO_CODIGO] = codigo
+                if (tipo != null) prefs[KEY_DISPOSITIVO_TIPO] = tipo
+            }
+        }
+    }
+
+    /**
+     * F19: limpia la seleccion de dispositivo. Usado en logout (no es parte
+     * de clear() porque la seleccion puede sobrevivir entre sesiones — un
+     * operador puede cerrar y reabrir la app sin perder su eleccion de
+     * dispositivo, igual que el casino y la impresora bluetooth).
+     *
+     * PERO en logout del casino SI se limpia (porque el dispositivo esta
+     * asociado al casino).
+     */
+    suspend fun clearDispositivo() {
+        setDispositivo(null, null, null, null)
+    }
+
     suspend fun clear() {
         context.authDataStore.edit { it.clear() }
     }
@@ -175,5 +228,10 @@ class AuthStore(private val context: Context) {
         val KEY_CASINO_COLOR_PRIMARIO = stringPreferencesKey("casino_color_primario")
         val KEY_CASINO_COLOR_ACENTO = stringPreferencesKey("casino_color_acent")
         val KEY_CASINO_LOGO_URL = stringPreferencesKey("casino_logo_url")
+        // F19: Dispositivo POS (seleccion local, no en JWT)
+        val KEY_DISPOSITIVO_ID = stringPreferencesKey("dispositivo_id")
+        val KEY_DISPOSITIVO_NOMBRE = stringPreferencesKey("dispositivo_nombre")
+        val KEY_DISPOSITIVO_CODIGO = stringPreferencesKey("dispositivo_codigo")
+        val KEY_DISPOSITIVO_TIPO = intPreferencesKey("dispositivo_tipo")
     }
 }

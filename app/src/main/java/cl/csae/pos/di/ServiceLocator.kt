@@ -7,6 +7,7 @@ import cl.csae.pos.data.api.PosApiService
 import cl.csae.pos.data.bluetooth.PrinterService
 import cl.csae.pos.data.prefs.AuthStore
 import cl.csae.pos.data.repository.AuthRepository
+import cl.csae.pos.data.selection.DispositivoPosActual
 import cl.csae.pos.data.repository.CatalogRepository
 import cl.csae.pos.data.repository.ConsumoRepository
 import cl.csae.pos.data.repository.TicketCacheRepository
@@ -46,6 +47,10 @@ object ServiceLocator {
     val ticketCache: TicketCacheRepository by lazy { TicketCacheRepository() }
 
     val printerService: PrinterService by lazy { PrinterService(appContext) }
+
+    // F19: dispositivo POS actualmente seleccionado (DataStore + singleton,
+    // replica el patron de la web DispositivoPosActual.cs Sprint 5.4).
+    val dispositivoPosActual: DispositivoPosActual by lazy { DispositivoPosActual(authStore) }
 
     fun init(context: Context) {
         if (::appContext.isInitialized) return
