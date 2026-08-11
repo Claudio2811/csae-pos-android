@@ -63,6 +63,15 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
+        <!-- Sprint F7 (2026-08-11): al pasar a play-services-mlkit-barcode-scanning
+             (unbundled), el modelo de barcode se descarga desde Google Play Services
+             en vez de venir embebido. Este meta-data hace que Play Store descargue
+             el modelo automaticamente al instalar la app, evitando que la primera
+             lectura tarde unos segundos. -->
+        <meta-data
+            android:name="com.google.mlkit.vision.DEPENDENCIES"
+            android:value="barcode" />
     </application>
 
 </manifest>

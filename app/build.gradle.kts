@@ -96,14 +96,23 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
 
-    // CameraX (escaneo QR en modo Garzon).
-    implementation("androidx.camera:camera-core:1.3.4")
-    implementation("androidx.camera:camera-camera2:1.3.4")
-    implementation("androidx.camera:camera-lifecycle:1.3.4")
-    implementation("androidx.camera:camera-view:1.3.4")
+    // CameraX 1.4.0+ = 16 KB page-aligned native libraries (cumple Google Play
+    // 16 KB page size requirement, deadline Feb 1 2027). 1.3.4 tenia
+    // libimage_processing_util_jni.so con LOAD segments a 4 KB.
+    // (Sprint F7, 2026-08-11)
+    implementation("androidx.camera:camera-core:1.4.0")
+    implementation("androidx.camera:camera-camera2:1.4.0")
+    implementation("androidx.camera:camera-lifecycle:1.4.0")
+    implementation("androidx.camera:camera-view:1.4.0")
 
-    // ML Kit barcode scanning (on-device, sin API key, modelo Google).
-    implementation("com.google.mlkit:barcode-scanning:17.3.0")
+    // ML Kit barcode scanning — variante UNBUNDLED (play-services-mlkit).
+    // Antes usabamos com.google.mlkit:barcode-scanning:17.3.0 (bundled) que
+    // incluye libbarhopper_v3.so en el APK con LOAD segments a 4 KB.
+    // La variante unbundled descarga el modelo desde Google Play Services en
+    // runtime, NO incluye el .so en el APK. Mismo API
+    // (com.google.mlkit.vision.barcode.*), 0 cambios de codigo.
+    // (Sprint F7, 2026-08-11)
+    implementation("com.google.android.gms:play-services-mlkit-barcode-scanning:18.3.1")
 
     // ZXing core para generar QR como Bitmap (preview del ticket).
     implementation("com.google.zxing:core:3.5.3")
