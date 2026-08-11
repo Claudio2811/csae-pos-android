@@ -21,6 +21,8 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.TransformedText
@@ -126,11 +128,21 @@ fun RutInputField(
             },
             isError = isError,
             visualTransformation = visualTransformation,
-            keyboardOptions = if (useCustomKeypad) {
-                KeyboardOptions(keyboardType = KeyboardType.Text)
-            } else {
-                KeyboardOptions(keyboardType = KeyboardType.Number)
-            },
+            // Sprint F13 (2026-08-11): cambiamos KeyboardType.Number -> Text
+            // para que el teclado del sistema muestre tambien la K del DV
+            // (KeyboardType.Number en Android NO muestra letras, asi que
+            // el operador no podia tipear '17620455-K'). El sistema operativo
+            // ofrece ademas un switch '123' para ver solo numeros.
+            // El auto-formato via VisualTransformation se encarga de poner
+            // los puntos y el guion antes del DV (12.345.678-K).
+            // Cuando se usa el NumericKeypad embebido (useCustomKeypad=true),
+            // se mantiene KeyboardType.Text para que el campo no acepte
+            // input por teclado (readOnly=true igual lo bloquea).
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Text,
+                capitalization = KeyboardCapitalization.Characters,
+                imeAction = ImeAction.Next,
+            ),
             singleLine = true,
         )
 

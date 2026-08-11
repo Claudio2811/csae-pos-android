@@ -20,8 +20,15 @@ import cl.csae.pos.model.Servicio
 import cl.csae.pos.model.Ticket
 import cl.csae.pos.ui.components.MinimalTopBar
 import cl.csae.pos.ui.components.normalizeRutInput
+import cl.csae.pos.ui.components.AppTextField
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+// Sprint F13 (2026-08-11): maxLength del input RUT.
+// Backend espera hasta 9 chars canonicos (8 digitos + DV) y 12 con formato
+// "12.345.678-K". El normalizeRutInput ya trunca a 9, pero el supportingText
+// del field muestra el conteo en vivo para feedback.
+private const val RUT_MAX_LENGTH = 12  // "12.345.678-K" es el formateado mas largo
 
 /**
  * Pantalla del modo TOTEM (sprint 3.2 + 3.3 + F8).
@@ -193,14 +200,23 @@ private fun RutInputStep(
 
         Spacer(Modifier.height(24.dp))
 
-        OutlinedTextField(
+        // Sprint F13 (2026-08-11): AppTextField con maxLength 12 (formato
+        // "12.345.678-K"). KeyboardType.Text + KeyboardCapitalization.Characters
+        // para que aparezca la K del DV. El auto-formato via normalizeRutInput
+        // se encarga de poner puntos y guion antes del DV.
+        AppTextField(
             value = rut,
             onValueChange = { onRutChange(normalizeRutInput(it)) },
-            singleLine = true,
+            label = "RUT",
+            placeholder = "12.345.678-9 o 12.345.678-K",
+            maxLength = RUT_MAX_LENGTH,
             enabled = !loading,
+            isError = error != null,
+            errorMessage = null,  // El error general se muestra debajo del field
             modifier = Modifier.fillMaxWidth(),
             keyboardOptions = KeyboardOptions(
-                keyboardType = KeyboardType.Number,
+                keyboardType = KeyboardType.Text,
+                capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.Characters,
                 imeAction = ImeAction.Search,
             ),
         )

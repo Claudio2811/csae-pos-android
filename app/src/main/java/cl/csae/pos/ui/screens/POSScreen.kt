@@ -178,13 +178,16 @@ fun POSScreen(
         ) {
             // Paso 1: RUT (sin keypad embebido; el keypad esta en el bottomBar).
             Text("1. RUT del comensal", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            // Sprint F13 (2026-08-11): el field ya tenia auto-formato + K via
+            // RutInputField. La longitud maxima ya la aplica normalizeRutInput
+            // (9 chars canonicos) y el placeholder 12 cuenta los puntos+guion.
             RutInputField(
                 value = rut,
                 onValueChange = {
                     rut = it
                     error = null
                 },
-                label = "12345678-5",
+                label = "12345678-5 o 12345678-K",
                 placeholder = "12.345.678-9",
                 enabled = !loading,
                 isError = error != null,

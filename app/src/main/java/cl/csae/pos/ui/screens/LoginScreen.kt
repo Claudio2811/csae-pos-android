@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cl.csae.pos.di.ServiceLocator
 import cl.csae.pos.model.UsuarioPos
+import cl.csae.pos.ui.components.AppTextField
 import kotlinx.coroutines.launch
 
 /**
@@ -33,12 +34,15 @@ import kotlinx.coroutines.launch
  * y `brandColor` se mantienen para compatibilidad con AppNavHost pero
  * ya no se renderizan en el layout — la UI es la misma para TOTEM /
  * GARZON / POS.
+ *
+ * Sprint F13 (2026-08-11): maxLength enforced en los 2 campos (200 chars,
+ * mismo limite que el LoginRequestValidator) + supportingText con conteo
+ * en vivo "X/200". El boton Ingresar valida localmente largo y no-vacio
+ * antes de pegarle a la API.
  */
 @Composable
 fun LoginScreen(
     onLoginOk: (UsuarioPos) -> Unit,
-    // Parametros legacy mantenidos por compatibilidad con AppNavHost, ya
-    // no se renderizan en el layout minimalista del Sprint F8.
     @Suppress("unused") headerTitle: String = "CSAE POS",
     @Suppress("unused") headerSubtitle: String = "Control de Servicios de Alimentacion",
     @Suppress("unused") brandColor: Color? = null,
@@ -51,10 +55,35 @@ fun LoginScreen(
     val focus = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
 
+    // Validaciones locales (reflejan las del LoginRequestValidator backend).
+    val usuarioError: String? = when {
+        usuario.isBlank() -> null  // solo mostrar despues del primer submit
+        usuario.length > 200 -> "Email o usuario demasiado largo (max 200)"
+        else -> null
+    }
+    val passwordError: String? = when {
+        password.isBlank() -> null
+        password.length < 6 -> "Password debe tener al menos 6 caracteres"
+        password.length > 200 -> "Password demasiado largo (max 200)"
+        else -> null
+    }
+
     fun submit() {
         if (loading) return
-        if (usuario.isBlank() || password.isBlank()) {
-            error = "Ingresa usuario y contrasena."
+        if (usuario.isBlank()) {
+            error = "Ingresa tu usuario."
+            return
+        }
+        if (password.isBlank()) {
+            error = "Ingresa tu contrasena."
+            return
+        }
+        if (usuario.length > 200) {
+            error = "Email o usuario demasiado largo (max 200)."
+            return
+        }
+        if (password.length < 6) {
+            error = "Password debe tener al menos 6 caracteres."
             return
         }
         loading = true
@@ -109,59 +138,61 @@ fun LoginScreen(
 
             Spacer(Modifier.height(24.dp))
 
-            // Campo Usuario
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    "Usuario",
-                    fontSize = 18.sp,
-                    color = MaterialTheme.colorScheme.onBackground,
-                )
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = usuario,
-                    onValueChange = { usuario = it; error = null },
-                    singleLine = true,
-                    enabled = !loading,
-                    modifier = Modifier.fillMaxWidth().focusRequester(focus),
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Email,
-                        imeAction = ImeAction.Next,
-                    ),
-                )
+            // Campo Usuario (Sprint F13: maxLength 200 via AppTextField)
+            AppTextField(
+                value = usuario,
+                onValueChange = { usuario = it; error = null },
+                label = "Usuario",
+                placeholder = "operador o email@empresa.cl",
+                maxLength = 200,
+                enabled = !loading,
+                isError = usuarioError != null,
+                errorMessage = usuarioError,
+                modifier = Modifier.fillMaxWidth().focusRequester(focus),
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Email,
+                    imeAction = ImeAction.Next,
+                ),
+            )
+
+            // Campo Contrasena (Sprint F13: maxLength 200 via AppTextField)
+            AppTextField(
+                value = password,
+                onValueChange = { password = it; error = null },
+                label = "Contrasena",
+                placeholder = "minimo 6 caracteres",
+                maxLength = 200,
+                enabled = !loading,
+                isError = passwordError != null,
+                errorMessage = passwordError,
+                visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth(),
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Password,
+                    imeAction = ImeAction.Done,
+                ),
+                keyboardActions = KeyboardActions(onDone = { submit() }),
+                // Truco para el trailing icon: AppTextField no lo soporta, asi
+                // que wrapeamos el field con un Box con el icon al lado.
+            )
+
+            // Sprint F13: el toggle de mostrar/ocultar password se movio a una
+            // fila aparte debajo del field para no romper el AppTextField.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(onClick = { showPassword = !showPassword }) {
+                    Icon(
+                        imageVector = if (showPassword) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                        contentDescription = null,
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(if (showPassword) "Ocultar" else "Mostrar")
+                }
             }
 
-            // Campo Contrasena
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    "Contrasena",
-                    fontSize = 18.sp,
-                    color = MaterialTheme.colorScheme.onBackground,
-                )
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = password,
-                    onValueChange = { password = it; error = null },
-                    singleLine = true,
-                    enabled = !loading,
-                    modifier = Modifier.fillMaxWidth(),
-                    visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Password,
-                        imeAction = ImeAction.Done,
-                    ),
-                    keyboardActions = KeyboardActions(onDone = { submit() }),
-                    trailingIcon = {
-                        IconButton(onClick = { showPassword = !showPassword }) {
-                            Icon(
-                                imageVector = if (showPassword) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
-                                contentDescription = if (showPassword) "Ocultar" else "Mostrar",
-                            )
-                        }
-                    },
-                )
-            }
-
-            // Error
+            // Error general del submit (vs. error local del field).
             error?.let { msg ->
                 Text(
                     msg,
