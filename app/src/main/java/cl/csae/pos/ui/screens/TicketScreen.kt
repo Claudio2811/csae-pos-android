@@ -8,8 +8,11 @@ import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.PictureAsPdf
@@ -18,8 +21,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -130,61 +135,126 @@ fun TicketScreen(
                 color = MaterialTheme.colorScheme.primary,
             )
 
-            // Preview del ticket (estilo papel termico 58mm)
-            Card(
-                modifier = Modifier.fillMaxWidth().widthIn(max = 360.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+            // Preview del ticket — Sprint F6 (2026-08-11): rediseñado para
+            // parecerse a un papel termico 58mm. Antes era un Card con
+            // elevation 4, separadores "---" en texto plano y fuentes
+            // variables (sans-serif Material). Ahora: Surface blanco plano
+            // con borde gris claro, fuente Monospace (estilo impresora
+            // termica), HorizontalDivider para las separaciones, label/valor
+            // en Row con el precio right-aligned, y un poco mas angosto
+            // (max 280dp en vez de 360dp, ~58mm a densidad hdpi).
+            val qrToken = ticket.qrToken
+                ?: "CSAE-${ticket.numero}-${ticket.comensal.rut}"
+            val qrBitmap = remember(qrToken) {
+                ServiceLocator.printerService.generarQrBitmap(qrToken, sizePx = 320)
+            }
+            Surface(
+                modifier = Modifier.fillMaxWidth().widthIn(max = 280.dp),
+                color = Color.White,
+                shape = RoundedCornerShape(2.dp),
+                border = BorderStroke(1.dp, Color(0xFFD0D0D0)),
+                shadowElevation = 2.dp,
             ) {
                 Column(
-                    modifier = Modifier.fillMaxWidth().padding(20.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+                    horizontalAlignment = Alignment.Start,
                 ) {
-                    Text("CSAE POS", fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
-                    Text("Casino Salamanca", style = MaterialTheme.typography.bodySmall)
-                    Text("---", modifier = Modifier.padding(vertical = 4.dp))
-                    Text(ticket.fechaHora, style = MaterialTheme.typography.bodySmall)
-                    Text("Ticket: ${ticket.numero}", style = MaterialTheme.typography.bodySmall)
-                    Text("---", modifier = Modifier.padding(vertical = 4.dp))
+                    // Header del casino (centrado, negrita)
                     Text(
-                        "Comensal: ${ticket.comensal.nombre} ${ticket.comensal.apellido ?: ""}".trim(),
-                        fontWeight = FontWeight.SemiBold,
+                        "CSAE POS",
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        color = Color.Black,
+                        modifier = Modifier.fillMaxWidth(),
                         textAlign = TextAlign.Center,
                     )
-                    Text("RUT: ${ticket.comensal.rut}", style = MaterialTheme.typography.bodySmall)
-                    if (ticket.comensal.empresa.isNotEmpty()) {
-                        Text("Empresa: ${ticket.comensal.empresa}", style = MaterialTheme.typography.bodySmall)
-                    }
-                    Text("---", modifier = Modifier.padding(vertical = 4.dp))
-                    Text("Servicio: ${ticket.servicio.nombre}", fontWeight = FontWeight.SemiBold)
-                    Text("Tipo: ${ticket.servicio.tipo}", style = MaterialTheme.typography.bodySmall)
-                    Text("Precio: $${ticket.precio.takeIf { it > 0 } ?: ticket.servicio.precio}", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    Text("---", modifier = Modifier.padding(vertical = 4.dp))
-                    Text("Operador: ${ticket.operador}", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        "Casino Salamanca",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        color = Color(0xFF555555),
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.Center,
+                    )
+                    DivThin()
+                    Text(ticket.fechaHora, fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = Color.Black)
+                    Text("Ticket: ${ticket.numero}", fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = Color.Black)
+                    DivThin()
 
-                    // Sprint 3.2: QR generado con ZXing. El qrToken viene del
-                    // backend (en RegistrarConsumoResponseDto.qrToken) y se mapea
-                    // al campo `qrToken` del Ticket local en ConsumoRepository.
-                    // Si el ticket no tiene qrToken (caso raro: tickets viejos
-                    // generados antes del Sprint 3.2), usamos uno sintetico como
-                    // fallback para no romper el preview.
-                    val qrToken = ticket.qrToken
-                        ?: "CSAE-${ticket.numero}-${ticket.comensal.rut}"
-                    val qrBitmap = remember(qrToken) {
-                        ServiceLocator.printerService.generarQrBitmap(qrToken, sizePx = 384)
+                    // Comensal
+                    Text(
+                        "${ticket.comensal.nombre} ${ticket.comensal.apellido ?: ""}".trim(),
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = Color.Black,
+                    )
+                    Text("RUT: ${ticket.comensal.rut}", fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = Color.Black)
+                    if (ticket.comensal.empresa.isNotEmpty()) {
+                        Text(
+                            ticket.comensal.empresa,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            color = Color(0xFF333333),
+                        )
                     }
+                    DivThin()
+
+                    // Servicio + precio (label/valor)
+                    Text("Servicio: ${ticket.servicio.nombre}", fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = Color.Black)
+                    Text("Tipo: ${ticket.servicio.tipo}", fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = Color(0xFF555555))
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "TOTAL",
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = Color.Black,
+                            modifier = Modifier.weight(1f),
+                        )
+                        val precioFinal = ticket.precio.takeIf { it > 0 } ?: ticket.servicio.precio
+                        Text(
+                            "$$precioFinal",
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp,
+                            color = Color.Black,
+                        )
+                    }
+                    DivThin()
+
+                    // Operador
+                    Text(
+                        "Operador: ${ticket.operador}",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                        color = Color(0xFF777777),
+                    )
+
+                    // QR (si hay)
                     qrBitmap?.let { bmp ->
-                        Spacer(Modifier.height(8.dp))
+                        DivThin()
+                        Box(
+                            modifier = Modifier.fillMaxWidth(),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Image(
+                                bitmap = bmp.asImageBitmap(),
+                                contentDescription = "QR del ticket",
+                                modifier = Modifier.size(160.dp),
+                            )
+                        }
                         Text(
                             "Escanea para validar",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Image(
-                            bitmap = bmp.asImageBitmap(),
-                            contentDescription = "QR del ticket",
-                            modifier = Modifier.size(180.dp),
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 10.sp,
+                            color = Color(0xFF777777),
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                            textAlign = TextAlign.Center,
                         )
                     }
                 }
@@ -352,5 +422,22 @@ fun PrinterPickerDialog(
         confirmButton = {
             TextButton(onClick = onDismiss) { Text("Cerrar") }
         },
+    )
+}
+
+/**
+ * Sprint F6 (2026-08-11): separador de linea fina estilo "punteado" para
+ * el preview del ticket termico. Reemplaza al viejo `Text("---")` y al
+ * HorizontalDivider default de Material3, que es muy grueso y azul
+ * (tema). Acá usamos gris claro (#D0D0D0) con 1dp de grosor y un
+ * padding vertical de 6dp, igual al espacio entre lineas de una
+ * impresora termica 58mm.
+ */
+@Composable
+private fun DivThin() {
+    HorizontalDivider(
+        thickness = 1.dp,
+        color = Color(0xFFD0D0D0),
+        modifier = Modifier.padding(vertical = 6.dp),
     )
 }
