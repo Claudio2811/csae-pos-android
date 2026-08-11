@@ -1,6 +1,7 @@
 package cl.csae.pos.data.repository
 
 import cl.csae.pos.data.api.ApiError
+import cl.csae.pos.data.api.CasinoThemeDto
 import cl.csae.pos.data.api.LoginRequest
 import cl.csae.pos.data.api.PosApiService
 import cl.csae.pos.data.prefs.AuthStore
@@ -25,6 +26,17 @@ import kotlinx.serialization.json.Json
  * - Al iniciar la app, una coroutine en background carga el JWT de DataStore al cache.
  *
  * Esto evita el `runBlocking` en cada llamada HTTP y respeta el main thread.
+ *
+ * **Sprint F16 (2026-08-11):** despues del login OK, hace un fetch a
+ * `GET /api/v1/casino` para obtener los datos de marca del casino
+ * (colorPrimario, colorAcento, logoUrl, nombre, RUT) y los persiste
+ * en [AuthStore]. Esos valores son los que usa el `CsaePosTheme` para
+ * aplicar el tema del casino (F16) y los logos en cascada.
+ *
+ * Si el fetch del casino falla (ej: el user es AdminEmpresa y el endpoint
+ * devuelve 404 porque no tiene casino), el login sigue OK pero los campos
+ * de casino quedan en null y la UI usa los colores default + logo del
+ * producto (CSAE).
  */
 class AuthRepository(
     private val api: PosApiService,
@@ -60,6 +72,45 @@ class AuthRepository(
 
     val isLoggedIn: Flow<Boolean> = authStore.token.map { it != null }
 
+    /**
+     * Sprint F16: Flow con el CasinoTheme actual (null si no hay login o si
+     * el user es AdminEmpresa y no tiene casino asociado). La UI lo
+     * `collectAsState` y aplica el `MaterialTheme` con esos colores.
+     *
+     * Flow.combine solo tiene overloads hasta 5 args. Para 6+ hay que
+     * pasar un Array (combineTransform). Lo construimos asi.
+     */
+    val currentCasinoTheme: Flow<CasinoThemeDto?> = combine(
+        authStore.casinoId,
+        authStore.casinoNombre,
+        authStore.casinoRut,
+        authStore.casinoColorPrimario,
+        authStore.casinoColorAcento,
+        authStore.casinoLogoUrl,
+    ) { values ->
+        @Suppress("UNCHECKED_CAST")
+        val id = values[0] as String?
+        @Suppress("UNCHECKED_CAST")
+        val nombre = values[1] as String?
+        @Suppress("UNCHECKED_CAST")
+        val rut = values[2] as String?
+        @Suppress("UNCHECKED_CAST")
+        val colorP = values[3] as String?
+        @Suppress("UNCHECKED_CAST")
+        val colorA = values[4] as String?
+        @Suppress("UNCHECKED_CAST")
+        val logo = values[5] as String?
+        if (id == null || nombre == null) null
+        else CasinoThemeDto(
+            id = id,
+            razonSocial = nombre,
+            rut = rut,
+            colorPrimario = colorP,
+            colorAcento = colorA,
+            logoUrl = logo,
+        )
+    }
+
     suspend fun login(email: String, password: String): Result<UsuarioPos> {
         return try {
             val resp = api.login(LoginRequest(email, password))
@@ -70,6 +121,29 @@ class AuthRepository(
             val body = resp.body() ?: return Result.failure(IllegalStateException("Respuesta vacia del API."))
             authStore.save(body.token, body.email, body.email, body.rol, body.restauranteId)
             jwtCache = body.token
+
+            // Sprint F16: despues del login, bajar el casino y guardar su tema.
+            // Si falla (ej: AdminEmpresa que no tiene casino, o 404), no es
+            // fatal: el login sigue OK y la UI usa colores default.
+            try {
+                val casinoResp = api.getCasino()
+                if (casinoResp.isSuccessful) {
+                    val c = casinoResp.body()
+                    if (c != null) {
+                        authStore.saveCasinoTheme(
+                            casinoId = c.id,
+                            casinoNombre = c.razonSocial,
+                            casinoRut = c.rut,
+                            colorPrimario = c.colorPrimario.takeIf { !it.isNullOrBlank() },
+                            colorAcento = c.colorAcento.takeIf { !it.isNullOrBlank() },
+                            logoUrl = c.logoUrl.takeIf { !it.isNullOrBlank() },
+                        )
+                    }
+                }
+            } catch (_: Exception) {
+                // Ignorar: el user podria no tener casino (AdminEmpresa)
+            }
+
             Result.success(
                 UsuarioPos(
                     username = body.email,
@@ -85,8 +159,39 @@ class AuthRepository(
     }
 
     suspend fun logout() {
+        // Sprint F16: clear() ya limpia todos los campos del DataStore,
+        // incluyendo los de casino (casinoId, colorPrimario, etc).
         authStore.clear()
         jwtCache = null
+    }
+
+    /**
+     * Sprint F16: re-baja el casino del backend y actualiza el theme en
+     * DataStore. Util para refrescar el tema sin pedir re-login (ej: el
+     * admin del casino cambio el colorPrimario y el operador quiere ver
+     * el cambio sin desloguearse). Llamado desde el boton "Refrescar tema"
+     * de Configuracion (F17).
+     */
+    suspend fun refreshCasinoTheme(): Result<Unit> {
+        return try {
+            val resp = api.getCasino()
+            if (!resp.isSuccessful) {
+                val msg = parseError(resp.errorBody()?.string(), resp.code())
+                return Result.failure(IllegalStateException(msg))
+            }
+            val c = resp.body() ?: return Result.failure(IllegalStateException("Respuesta vacia del API."))
+            authStore.saveCasinoTheme(
+                casinoId = c.id,
+                casinoNombre = c.razonSocial,
+                casinoRut = c.rut,
+                colorPrimario = c.colorPrimario.takeIf { !it.isNullOrBlank() },
+                colorAcento = c.colorAcento.takeIf { !it.isNullOrBlank() },
+                logoUrl = c.logoUrl.takeIf { !it.isNullOrBlank() },
+            )
+            Result.success(Unit)
+        } catch (t: Throwable) {
+            Result.failure(t)
+        }
     }
 
     private fun parseError(errorBody: String?, code: Int): String {

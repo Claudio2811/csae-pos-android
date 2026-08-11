@@ -28,6 +28,12 @@ import kotlinx.coroutines.flow.map
  * usuario SIEMPRE ve el login primero aunque tenga un JWT valido en
  * DataStore. Esto resuelve el bug "la app va directo al modo preferido sin
  * pedir login tras una actualizacion".
+ *
+ * **Sprint F16 (2026-08-11):** se agregan campos de marca del casino
+ * (colorPrimario, colorAcento, logoUrl, casinoId, casinoNombre, casinoRut)
+ * para que la app aplique el tema del casino actual (F16) sin pegarle al
+ * backend en cada render. Los valores se persisten al hacer login (via
+ * AuthRepository.saveCasinoTheme) y se limpian al logout.
  */
 private val Context.authDataStore by preferencesDataStore(name = "csae_pos_auth")
 
@@ -45,6 +51,14 @@ class AuthStore(private val context: Context) {
      */
     val impresoraMac: Flow<String?> = context.authDataStore.data.map { it[KEY_IMPRESORA_MAC] }
     val impresoraNombre: Flow<String?> = context.authDataStore.data.map { it[KEY_IMPRESORA_NOMBRE] }
+
+    // ===== F16: Tema del casino actual =====
+    val casinoId: Flow<String?> = context.authDataStore.data.map { it[KEY_CASINO_ID] }
+    val casinoNombre: Flow<String?> = context.authDataStore.data.map { it[KEY_CASINO_NOMBRE] }
+    val casinoRut: Flow<String?> = context.authDataStore.data.map { it[KEY_CASINO_RUT] }
+    val casinoColorPrimario: Flow<String?> = context.authDataStore.data.map { it[KEY_CASINO_COLOR_PRIMARIO] }
+    val casinoColorAcento: Flow<String?> = context.authDataStore.data.map { it[KEY_CASINO_COLOR_ACENTO] }
+    val casinoLogoUrl: Flow<String?> = context.authDataStore.data.map { it[KEY_CASINO_LOGO_URL] }
 
     suspend fun getToken(): String? = context.authDataStore.data.first()[KEY_TOKEN]
 
@@ -66,6 +80,38 @@ class AuthStore(private val context: Context) {
             prefs[KEY_NAME] = displayName
             prefs[KEY_ROL] = rol
             if (restauranteId != null) prefs[KEY_RESTAURANTE] = restauranteId
+        }
+    }
+
+    /**
+     * **Sprint F16 (2026-08-11):** persiste los datos de marca del casino
+     * (id, nombre, RUT, colorPrimario, colorAcento, logoUrl) leidos del
+     * endpoint `GET /api/v1/casino` despues del login. La UI los lee via
+     * [casinoId] / [casinoColorPrimario] / etc para aplicar el theme
+     * dinamico y mostrar el logo.
+     *
+     * El backend siempre devuelve colores en formato `#RRGGBB` (6 chars, sin
+     * alpha) segun F14 fix. Si el casino no tiene logo, [casinoLogoUrl]
+     * queda en null y la UI usa el logo del producto (CSAE) como fallback.
+     */
+    suspend fun saveCasinoTheme(
+        casinoId: String,
+        casinoNombre: String,
+        casinoRut: String?,
+        colorPrimario: String?,
+        colorAcento: String?,
+        logoUrl: String?,
+    ) {
+        context.authDataStore.edit { prefs ->
+            prefs[KEY_CASINO_ID] = casinoId
+            prefs[KEY_CASINO_NOMBRE] = casinoNombre
+            if (casinoRut != null) prefs[KEY_CASINO_RUT] = casinoRut
+            // Guardamos el color aunque sea null (no se aplicaria el override
+            // y la UI usa el default). En la practica el backend siempre
+            // devuelve un color (default #1976d2 / #ff9800).
+            if (colorPrimario != null) prefs[KEY_CASINO_COLOR_PRIMARIO] = colorPrimario
+            if (colorAcento != null) prefs[KEY_CASINO_COLOR_ACENTO] = colorAcento
+            if (logoUrl != null) prefs[KEY_CASINO_LOGO_URL] = logoUrl
         }
     }
 
@@ -122,5 +168,12 @@ class AuthStore(private val context: Context) {
         val KEY_IMPRESORA_MAC = stringPreferencesKey("impresora_mac")
         val KEY_IMPRESORA_NOMBRE = stringPreferencesKey("impresora_nombre")
         val KEY_VERSION_CODE = intPreferencesKey("last_seen_version_code")
+        // F16
+        val KEY_CASINO_ID = stringPreferencesKey("casino_id")
+        val KEY_CASINO_NOMBRE = stringPreferencesKey("casino_nombre")
+        val KEY_CASINO_RUT = stringPreferencesKey("casino_rut")
+        val KEY_CASINO_COLOR_PRIMARIO = stringPreferencesKey("casino_color_primario")
+        val KEY_CASINO_COLOR_ACENTO = stringPreferencesKey("casino_color_acent")
+        val KEY_CASINO_LOGO_URL = stringPreferencesKey("casino_logo_url")
     }
 }

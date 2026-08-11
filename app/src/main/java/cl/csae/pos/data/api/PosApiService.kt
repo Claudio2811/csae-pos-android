@@ -18,6 +18,16 @@ interface PosApiService {
     @POST("api/v1/auth/login")
     suspend fun login(@Body body: LoginRequest): Response<LoginResponseDto>
 
+    // ============= CASINO TEMA (sprint F16) =============
+
+    /**
+     * Devuelve la info del casino actual (incluye colorPrimario,
+     * colorAcento, logoUrl, razonSocial). Sprint F16: el operador la
+     * consume al login para aplicar el tema del casino.
+     */
+    @GET("api/v1/casino")
+    suspend fun getCasino(): Response<CasinoThemeDto>
+
     // ============= CATALOG =============
 
     @GET("api/v1/pos/catalog")
