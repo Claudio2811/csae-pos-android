@@ -27,28 +27,24 @@ import kotlinx.coroutines.launch
 /**
  * Pantalla de login. Sprint 3.1.2: contra la API real de CSAE.
  *
- * El operador ingresa su email + contrasena. El `AuthRepository` llama a
- * `POST /api/v1/auth/login` y guarda el JWT en DataStore si es OK.
- *
- * Despues del login se dispara `catalogRepo.refresh()` para bajar el catalog
- * completo (empresas, servicios, comensales) que se usara en el POS.
- *
- * Sprint 3.2: la pantalla es reutilizada por modo Garzon (header "Modo Garzon")
- * y modo TOTEM (header "Modo Totem", con un campo RUT adicional que NO se usa
- * para login del operador, queda como nota de UI).
+ * Sprint F8 (2026-08-11): rediseño segun wireframes del usuario. Ahora
+ * tiene solo 2 campos (Usuario + Contrasena), sin card wrapper ni
+ * titulo grande de marca. Los parametros `headerTitle`, `headerSubtitle`
+ * y `brandColor` se mantienen para compatibilidad con AppNavHost pero
+ * ya no se renderizan en el layout — la UI es la misma para TOTEM /
+ * GARZON / POS.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LoginScreen(
     onLoginOk: (UsuarioPos) -> Unit,
-    headerTitle: String = "CSAE POS",
-    headerSubtitle: String = "Control de Servicios de Alimentacion",
-    brandColor: Color? = null,
+    // Parametros legacy mantenidos por compatibilidad con AppNavHost, ya
+    // no se renderizan en el layout minimalista del Sprint F8.
+    @Suppress("unused") headerTitle: String = "CSAE POS",
+    @Suppress("unused") headerSubtitle: String = "Control de Servicios de Alimentacion",
+    @Suppress("unused") brandColor: Color? = null,
 ) {
-    val effectiveBrand = brandColor ?: MaterialTheme.colorScheme.primary
-    var email by remember { mutableStateOf("admin@casino-demo.cl") }
-    var password by remember { mutableStateOf("Demo123!") }
-    var rutOperador by remember { mutableStateOf("") }
+    var usuario by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
     var showPassword by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(false) }
@@ -57,25 +53,24 @@ fun LoginScreen(
 
     fun submit() {
         if (loading) return
-        if (email.isBlank() || password.isBlank()) {
-            error = "Ingresa email y contrasena."
+        if (usuario.isBlank() || password.isBlank()) {
+            error = "Ingresa usuario y contrasena."
             return
         }
         loading = true
         error = null
         scope.launch {
-            val result = ServiceLocator.authRepo.login(email.trim(), password)
+            val result = ServiceLocator.authRepo.login(usuario.trim(), password)
             result
-                .onSuccess { usuario ->
+                .onSuccess { u ->
                     // Bajar el catalog en background (no bloquea el login).
-                    // Si falla, el POS mostrara un error al buscar comensal.
                     val cat = ServiceLocator.catalogRepo.refresh()
                     if (cat.isFailure) {
-                        // No bloqueamos el login por esto: el operador puede ir al POS
-                        // y reintentar la descarga desde ahi.
+                        // No bloqueamos el login por esto: el operador puede ir
+                        // al POS y reintentar la descarga desde ahi.
                     }
                     loading = false
-                    onLoginOk(usuario)
+                    onLoginOk(u)
                 }
                 .onFailure { e ->
                     loading = false
@@ -84,126 +79,103 @@ fun LoginScreen(
         }
     }
 
-    Surface(modifier = Modifier.fillMaxSize(), color = effectiveBrand) {
+    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
             modifier = Modifier.fillMaxSize().padding(32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.Start,
+            verticalArrangement = Arrangement.spacedBy(20.dp, Alignment.Top),
         ) {
-            Text(
-                text = headerTitle,
-                fontSize = 48.sp,
-                fontWeight = FontWeight.ExtraBold,
-                color = Color.White,
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = headerSubtitle,
-                fontSize = 16.sp,
-                color = Color.White.copy(alpha = 0.85f),
-            )
             Spacer(Modifier.height(48.dp))
 
-            Card(
-                modifier = Modifier.fillMaxWidth().widthIn(max = 480.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
-            ) {
-                Column(
-                    modifier = Modifier.padding(24.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                ) {
-                    Text("Iniciar sesion", style = MaterialTheme.typography.headlineSmall)
+            // Titulo "Iniciar sesion" (wireframe 1)
+            Text(
+                "Iniciar sesion",
+                fontSize = 40.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
 
-                    OutlinedTextField(
-                        value = email,
-                        onValueChange = { email = it; error = null },
-                        label = { Text("Email") },
-                        singleLine = true,
-                        enabled = !loading,
-                        modifier = Modifier.fillMaxWidth().focusRequester(focus),
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Email,
-                            imeAction = ImeAction.Next,
-                        ),
-                    )
+            Spacer(Modifier.height(24.dp))
 
-                    // RUT del operador (opcional, sprint 3.2). El tótem no requiere
-                    // login, pero dejamos el campo en LoginScreen con teclado
-                    // numérico por si después se usa para auditoría del operador.
-                    OutlinedTextField(
-                        value = rutOperador,
-                        onValueChange = { v ->
-                            // Acepta solo [0-9Kk.-], sin espacios ni letras.
-                            val filtrado = v.filter { it.isDigit() || it == '-' || it == '.' || it == 'k' || it == 'K' }
-                            rutOperador = filtrado
-                            error = null
-                        },
-                        label = { Text("RUT (opcional)") },
-                        placeholder = { Text("12345678-5") },
-                        singleLine = true,
-                        enabled = !loading,
-                        modifier = Modifier.fillMaxWidth(),
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Number,
-                            imeAction = ImeAction.Next,
-                        ),
-                    )
+            // Campo Usuario
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    "Usuario",
+                    fontSize = 18.sp,
+                    color = MaterialTheme.colorScheme.onBackground,
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = usuario,
+                    onValueChange = { usuario = it; error = null },
+                    singleLine = true,
+                    enabled = !loading,
+                    modifier = Modifier.fillMaxWidth().focusRequester(focus),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Email,
+                        imeAction = ImeAction.Next,
+                    ),
+                )
+            }
 
-                    OutlinedTextField(
-                        value = password,
-                        onValueChange = { password = it; error = null },
-                        label = { Text("Contrasena") },
-                        singleLine = true,
-                        enabled = !loading,
-                        modifier = Modifier.fillMaxWidth(),
-                        visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Password,
-                            imeAction = ImeAction.Done,
-                        ),
-                        keyboardActions = KeyboardActions(onDone = { submit() }),
-                        trailingIcon = {
-                            IconButton(onClick = { showPassword = !showPassword }) {
-                                Icon(
-                                    imageVector = if (showPassword) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
-                                    contentDescription = if (showPassword) "Ocultar" else "Mostrar",
-                                )
-                            }
-                        },
-                    )
-
-                    error?.let { msg ->
-                        Text(
-                            msg,
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                    }
-
-                    Button(
-                        onClick = { submit() },
-                        enabled = !loading,
-                        modifier = Modifier.fillMaxWidth().height(56.dp),
-                    ) {
-                        if (loading) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(24.dp),
-                                color = MaterialTheme.colorScheme.onPrimary,
-                                strokeWidth = 2.dp,
+            // Campo Contrasena
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    "Contrasena",
+                    fontSize = 18.sp,
+                    color = MaterialTheme.colorScheme.onBackground,
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it; error = null },
+                    singleLine = true,
+                    enabled = !loading,
+                    modifier = Modifier.fillMaxWidth(),
+                    visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Password,
+                        imeAction = ImeAction.Done,
+                    ),
+                    keyboardActions = KeyboardActions(onDone = { submit() }),
+                    trailingIcon = {
+                        IconButton(onClick = { showPassword = !showPassword }) {
+                            Icon(
+                                imageVector = if (showPassword) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                contentDescription = if (showPassword) "Ocultar" else "Mostrar",
                             )
-                            Spacer(Modifier.width(12.dp))
-                            Text("Conectando...", fontSize = 16.sp)
-                        } else {
-                            Text("Entrar", fontSize = 18.sp)
                         }
-                    }
+                    },
+                )
+            }
 
-                    Text(
-                        text = "Demo Casino: admin@casino-demo.cl / Demo123!",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            // Error
+            error?.let { msg ->
+                Text(
+                    msg,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+
+            // Boton Ingresar
+            OutlinedButton(
+                onClick = { submit() },
+                enabled = !loading,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(64.dp),
+                shape = MaterialTheme.shapes.medium,
+            ) {
+                if (loading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        strokeWidth = 2.dp,
                     )
+                    Spacer(Modifier.width(12.dp))
+                    Text("Conectando...", fontSize = 18.sp)
+                } else {
+                    Text("Ingresar", fontSize = 22.sp, fontWeight = FontWeight.Medium)
                 }
             }
         }

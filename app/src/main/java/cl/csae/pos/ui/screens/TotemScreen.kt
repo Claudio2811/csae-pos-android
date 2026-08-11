@@ -1,74 +1,59 @@
 package cl.csae.pos.ui.screens
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Block
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Error
-import androidx.compose.material.icons.filled.Restaurant
+import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cl.csae.pos.di.ServiceLocator
 import cl.csae.pos.model.Comensal
 import cl.csae.pos.model.Servicio
 import cl.csae.pos.model.Ticket
-import cl.csae.pos.ui.components.CambiarModoTopBar
-import cl.csae.pos.ui.components.NumericKeypad
-import cl.csae.pos.ui.components.RutInputField
-import cl.csae.pos.ui.components.topBarColorsFor
+import cl.csae.pos.ui.components.MinimalTopBar
+import cl.csae.pos.ui.components.normalizeRutInput
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * Pantalla del modo TOTEM (sprint 3.2 + 3.3).
+ * Pantalla del modo TOTEM (sprint 3.2 + 3.3 + F8).
  *
- * Flujo pensado para kiosko self-service (tablet dedicado):
- *   1. Comensal tipea su RUT en el input de la parte superior.
- *   2. Tap "GENERAR TICKET" (o el unico servicio si hay uno solo).
- *   3. La pantalla consulta el comensal + servicios habilitados.
- *   4. Si tiene UN solo servicio, lo elige automaticamente.
- *   5. Si tiene varios, muestra chips clickeables con contador.
- *   6. Si no tiene, muestra card rojo explicativo.
- *   7. Genera el ticket (POST /pos/consumos).
- *   8. Muestra el ticket con QR por 3 segundos.
- *   9. Vuelve automaticamente al input vacio (loop).
+ * Sprint F8 (2026-08-11): rediseño segun wireframes 3-6 del usuario.
+ * Ahora son 4 estados visuales distintos, cada uno con su layout
+ * minimalista, todos con TopBar minimal (solo icono de settings):
  *
- * Sprint 3.3 (fix UX):
- * - NumericKeypad vive en el `bottomBar` del Scaffold (panel fijo abajo).
- * - Todo el resto (RUT, servicios, feedback, boton) vive en un Column con
- *   verticalScroll, asi el operador puede scrollear para ver TODOS los
- *   servicios en pantallas chicas o si hay muchos.
- * - RutInputField ya no embebe el keypad: el flag `useCustomKeypad = false`
- *   delega la captura al NumericKeypad del bottomBar.
- * - El keypad NO se renderiza cuando el estado es TicketMostrado (ahi ocupa
- *   toda la pantalla el QR); ver `keypadVisible` abajo.
+ *   1. RutInput: input RUT + boton "Buscar" (wireframe 3-4)
+ *   2. SeleccionServicio: 3 botones outlined (wireframe 5)
+ *   3. Imprimiendo: "Imprimiendo Ticket" + icono impresora (wireframe 6)
+ *   4. TicketMostrado: pantalla de ticket con QR (existente)
+ *
+ * Se removio:
+ * - NumericKeypad del bottomBar (el operador usa teclado del sistema).
+ * - CambiarModoTopBar (reemplazado por MinimalTopBar).
+ * - Container azul TotemBlue (ahora usa background del theme).
+ * - Cards de "un servicio" / "sin servicios" (reemplazado por
+ *   auto-flow con error inline en RutInput).
  */
-private val TotemBlue = Color(0xFF1565C0)
-
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TotemScreen(
-    onCambiarModo: () -> Unit = {},
-    onIrLoginTotem: () -> Unit = {},
-    onIrConfig: () -> Unit = {},
+    onSettings: () -> Unit = {},
+    @Suppress("unused") onCambiarModo: () -> Unit = {},
+    @Suppress("unused") onIrLoginTotem: () -> Unit = {},
+    @Suppress("unused") onIrConfig: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var rut by remember { mutableStateOf("") }
     var comensal by remember { mutableStateOf<Comensal?>(null) }
     var serviciosVisibles by remember { mutableStateOf<List<Servicio>>(emptyList()) }
-    var servicioSeleccionado by remember { mutableStateOf<Servicio?>(null) }
-    var estado by remember { mutableStateOf<EstadoTotem>(EstadoTotem.Idle) }
+    var estado by remember { mutableStateOf<EstadoTotem>(EstadoTotem.RutInput) }
     var error by remember { mutableStateOf<String?>(null) }
     var ultimoTicket by remember { mutableStateOf<Ticket?>(null) }
     var ultimosTickets by remember { mutableStateOf<List<Ticket>>(emptyList()) }
@@ -77,13 +62,12 @@ fun TotemScreen(
         rut = ""
         comensal = null
         serviciosVisibles = emptyList()
-        servicioSeleccionado = null
-        estado = EstadoTotem.Idle
+        estado = EstadoTotem.RutInput
         error = null
     }
 
     fun generarTicket(c: Comensal, s: Servicio) {
-        estado = EstadoTotem.Generando
+        estado = EstadoTotem.Imprimiendo
         error = null
         scope.launch {
             val r = ServiceLocator.consumoRepo.registrar(
@@ -95,11 +79,11 @@ fun TotemScreen(
                 ultimoTicket = t
                 ultimosTickets = (listOf(t) + ultimosTickets).take(5)
                 estado = EstadoTotem.TicketMostrado
-                // Volver al loop despues de 3s.
-                delay(3000)
+                // Volver al loop despues de 5s para que el comensal alcance a ver el QR.
+                delay(5000)
                 reset()
             }.onFailure { e ->
-                estado = EstadoTotem.Idle
+                estado = EstadoTotem.RutInput
                 error = e.message ?: "Error generando ticket"
             }
         }
@@ -117,391 +101,247 @@ fun TotemScreen(
             if (ServiceLocator.catalogRepo.getCached() == null) {
                 val r = ServiceLocator.catalogRepo.refresh()
                 if (r.isFailure) {
-                    estado = EstadoTotem.Idle
-                    error = "No se pudo cargar el catalog: ${r.exceptionOrNull()?.message}"
+                    estado = EstadoTotem.RutInput
+                    error = "No se pudo cargar el catalogo: ${r.exceptionOrNull()?.message}"
                     return@launch
                 }
             }
             val c = ServiceLocator.catalogRepo.buscarComensal(rut)
             when {
                 c == null -> {
-                    estado = EstadoTotem.Idle
+                    estado = EstadoTotem.RutInput
                     error = "No se encontro comensal con RUT $rut en este casino."
                 }
                 c.servicios.isEmpty() -> {
-                    comensal = c
-                    serviciosVisibles = emptyList()
-                    estado = EstadoTotem.SinServicios
+                    estado = EstadoTotem.RutInput
+                    error = "Este comensal no tiene servicios habilitados para hoy."
                 }
                 c.servicios.size == 1 -> {
                     comensal = c
                     serviciosVisibles = c.servicios
-                    servicioSeleccionado = c.servicios.first()
-                    estado = EstadoTotem.UnServicio
-                    // Autogenerar ticket.
                     generarTicket(c, c.servicios.first())
                 }
                 else -> {
                     comensal = c
                     serviciosVisibles = c.servicios
-                    servicioSeleccionado = null
                     estado = EstadoTotem.SeleccionServicio
                 }
             }
         }
     }
 
-    // Mientras se muestra el ticket con QR el keypad se oculta para dar
-    // todo el espacio vertical al QR (que es lo que mira el comensal).
-    val keypadVisible = estado != EstadoTotem.TicketMostrado
-
     Scaffold(
-        containerColor = TotemBlue,
-        topBar = {
-            CambiarModoTopBar(
-                title = "TOTEM - CSAE",
-                subtitle = "Kiosko self-service",
-                onCambiarModo = onCambiarModo,
-                actions = {
-                    TextButton(onClick = onIrLoginTotem) {
-                        Text("LOGIN", color = Color.White)
-                    }
-                    TextButton(onClick = onIrConfig) {
-                        Text("CONFIG", color = Color.White)
-                    }
-                },
-                colors = topBarColorsFor(TotemBlue),
-            )
-        },
-        bottomBar = {
-            if (keypadVisible) {
-                // Panel fijo abajo: keypad full-width. NO es scrolleable.
-                Surface(
-                    color = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 8.dp,
-                    shadowElevation = 12.dp,
-                ) {
-                    Box(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
-                        NumericKeypad(
-                            onKeyPress = { ch ->
-                                rut = cl.csae.pos.ui.components.normalizeRutInput(rut + ch)
-                            },
-                            onBackspace = {
-                                if (rut.isNotEmpty()) rut = rut.dropLast(1)
-                            },
-                            enabled = estado == EstadoTotem.Idle || estado == EstadoTotem.Buscando,
-                        )
-                    }
-                }
-            }
-        },
+        topBar = { MinimalTopBar(onSettings = onSettings) },
     ) { padding ->
-        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 24.dp, vertical = 16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                Text(
-                    "Tipea tu RUT y genera tu ticket",
-                    color = Color.White.copy(alpha = 0.9f),
-                    fontSize = 18.sp,
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = 24.dp, vertical = 24.dp),
+        ) {
+            when (estado) {
+                EstadoTotem.RutInput, EstadoTotem.Buscando -> RutInputStep(
+                    rut = rut,
+                    onRutChange = { rut = it; error = null },
+                    onBuscar = ::buscar,
+                    error = error,
+                    loading = estado == EstadoTotem.Buscando,
                 )
-
-                when (estado) {
-                    EstadoTotem.TicketMostrado -> {
-                        ultimoTicket?.let { t ->
-                            TicketMostradoCard(
-                                nombre = t.comensal.nombre + " " + (t.comensal.apellido ?: ""),
-                                rut = t.comensal.rut,
-                                servicio = t.servicio.nombre,
-                                precio = t.precio.takeIf { it > 0 } ?: t.servicio.precio,
-                                ticketNumero = t.numero,
-                                qrToken = t.qrToken,
-                            )
-                        }
-                    }
-                    else -> {
-                        // Input RUT grande SIN keypad embebido (el keypad esta en bottomBar).
-                        RutInputField(
-                            value = rut,
-                            onValueChange = {
-                                rut = it
-                                error = null
-                            },
-                            label = "Tu RUT",
-                            placeholder = "12.345.678-9",
-                            enabled = estado == EstadoTotem.Idle || estado == EstadoTotem.Buscando,
-                            isError = error != null,
-                            useCustomKeypad = false,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-
-                        when (estado) {
-                            EstadoTotem.SinServicios -> {
-                                comensal?.let { c ->
-                                    SinServiciosCard(nombre = "${c.nombre} ${c.apellido ?: ""}".trim(), rut = c.rut)
-                                }
-                            }
-                            EstadoTotem.UnServicio -> {
-                                serviciosVisibles.firstOrNull()?.let { s ->
-                                    UnServicioCard(
-                                        nombre = "${comensal?.nombre ?: ""} ${comensal?.apellido ?: ""}".trim(),
-                                        servicio = s,
-                                    )
-                                }
-                            }
-                            EstadoTotem.SeleccionServicio -> {
-                                Text(
-                                    "${serviciosVisibles.size} servicios disponibles. Selecciona uno:",
-                                    color = Color.White,
-                                    fontSize = 18.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                )
-                                FlowRowChips(
-                                    items = serviciosVisibles,
-                                    selected = servicioSeleccionado,
-                                    onSelect = { servicioSeleccionado = it },
-                                )
-                            }
-                            else -> { /* Idle, Buscando, Generando -> solo spinner abajo */ }
-                        }
-
-                        if (estado == EstadoTotem.Buscando || estado == EstadoTotem.Generando) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(28.dp),
-                                    color = Color.White,
-                                )
-                                Text(
-                                    when (estado) {
-                                        EstadoTotem.Buscando -> "Buscando comensal..."
-                                        EstadoTotem.Generando -> "Generando ticket..."
-                                        else -> ""
-                                    },
-                                    color = Color.White,
-                                    fontSize = 18.sp,
-                                )
-                            }
-                        }
-
-                        Button(
-                            onClick = {
-                                when (estado) {
-                                    EstadoTotem.SeleccionServicio -> {
-                                        val c = comensal
-                                        val s = servicioSeleccionado
-                                        if (c != null && s != null) generarTicket(c, s)
-                                    }
-                                    else -> buscar()
-                                }
-                            },
-                            enabled = when (estado) {
-                                EstadoTotem.Idle -> rut.isNotBlank()
-                                EstadoTotem.SeleccionServicio -> servicioSeleccionado != null
-                                else -> false
-                            },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color.White,
-                                contentColor = TotemBlue,
-                            ),
-                            modifier = Modifier.fillMaxWidth().height(72.dp),
-                        ) {
-                            Icon(
-                                when (estado) {
-                                    EstadoTotem.SeleccionServicio -> Icons.Filled.Restaurant
-                                    else -> Icons.Filled.Search
-                                },
-                                contentDescription = null,
-                                modifier = Modifier.size(28.dp),
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                when (estado) {
-                                    EstadoTotem.SeleccionServicio -> "GENERAR TICKET"
-                                    else -> "BUSCAR"
-                                },
-                                fontSize = 22.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                            )
-                        }
-                    }
-                }
-
-                error?.let { msg ->
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFFB00020)),
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(Icons.Filled.Error, contentDescription = null, tint = Color.White)
-                            Spacer(Modifier.width(8.dp))
-                            Text(msg, color = Color.White, fontWeight = FontWeight.SemiBold)
-                        }
-                    }
-                }
-
-                // Indicador ultimo ticket
-                if (estado == EstadoTotem.Idle && ultimosTickets.isNotEmpty()) {
-                    Text(
-                        "Ultimo ticket: ${ultimosTickets.first().numero} - ${ultimosTickets.first().comensal.nombre}",
-                        color = Color.White.copy(alpha = 0.7f),
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-
-                // Padding inferior para que el contenido no quede pegado al
-                // keypad cuando se hace scroll hasta el final.
-                Spacer(Modifier.height(8.dp))
+                EstadoTotem.SeleccionServicio -> SeleccionServicioStep(
+                    servicios = serviciosVisibles,
+                    onSelect = { generarTicket(comensal!!, it) },
+                    onBack = { reset() },
+                )
+                EstadoTotem.Imprimiendo -> ImprimiendoStep()
+                EstadoTotem.TicketMostrado -> TicketMostradoStep(
+                    ticket = ultimoTicket,
+                    onNuevo = { reset() },
+                )
             }
         }
     }
 }
 
-private enum class EstadoTotem { Idle, Buscando, SeleccionServicio, Generando, TicketMostrado, UnServicio, SinServicios }
-
-@Composable
-private fun FlowRowChips(
-    items: List<Servicio>,
-    selected: Servicio?,
-    onSelect: (Servicio) -> Unit,
-) {
-    androidx.compose.foundation.layout.FlowRow(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        items.forEach { s ->
-            FilterChip(
-                selected = selected?.id == s.id,
-                onClick = { onSelect(s) },
-                label = {
-                    Column {
-                        Text(s.nombre, fontWeight = FontWeight.SemiBold)
-                        Text("$${s.precio}", style = MaterialTheme.typography.bodySmall)
-                    }
-                },
-                leadingIcon = { Icon(Icons.Filled.Restaurant, contentDescription = null) },
-            )
-        }
-    }
-}
+private enum class EstadoTotem { RutInput, Buscando, SeleccionServicio, Imprimiendo, TicketMostrado }
 
 /**
- * Sprint 3.2.1: card verde que muestra el unico servicio del comensal y lo
- * auto-selecciona. Mas amigable que la pantalla anterior.
+ * Pantalla 1 — wireframes 3 y 4. Input RUT + boton "Buscar" outlined.
+ * El wireframe 4 es la misma pantalla con texto en el field, no un
+ * estado distinto.
  */
 @Composable
-private fun UnServicioCard(nombre: String, servicio: Servicio) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF1B5E20)),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Color.White, modifier = Modifier.size(36.dp))
-            Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(nombre, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
-                Text(
-                    "Servicio: ${servicio.nombre} - $${servicio.precio}",
-                    color = Color.White,
-                    fontSize = 16.sp,
-                )
-            }
-        }
-    }
-}
-
-/**
- * Sprint 3.2.1: card rojo que indica que el comensal no tiene servicios
- * habilitados hoy. Antes era un mensaje de error generico.
- */
-@Composable
-private fun SinServiciosCard(nombre: String, rut: String) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFFB00020)),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(Icons.Filled.Block, contentDescription = null, tint = Color.White, modifier = Modifier.size(36.dp))
-            Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(nombre, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
-                Text("RUT: $rut", color = Color.White.copy(alpha = 0.9f), style = MaterialTheme.typography.bodySmall)
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "No hay servicios habilitados para este comensal hoy.",
-                    color = Color.White,
-                    fontSize = 16.sp,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun TicketMostradoCard(
-    nombre: String,
+private fun RutInputStep(
     rut: String,
-    servicio: String,
-    precio: Int,
-    ticketNumero: String,
-    qrToken: String? = null,
+    onRutChange: (String) -> Unit,
+    onBuscar: () -> Unit,
+    error: String?,
+    loading: Boolean,
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.Start,
+        verticalArrangement = Arrangement.spacedBy(20.dp, Alignment.Top),
     ) {
-        Column(
-            modifier = Modifier.padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
+        Spacer(Modifier.height(48.dp))
+
+        Text(
+            "Ingrese Rut",
+            fontSize = 32.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onBackground,
+        )
+
+        Spacer(Modifier.height(24.dp))
+
+        OutlinedTextField(
+            value = rut,
+            onValueChange = { onRutChange(normalizeRutInput(it)) },
+            singleLine = true,
+            enabled = !loading,
+            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Number,
+                imeAction = ImeAction.Search,
+            ),
+        )
+
+        error?.let { msg ->
             Text(
-                "TICKET GENERADO",
-                fontSize = 22.sp,
-                fontWeight = FontWeight.ExtraBold,
-                color = TotemBlue,
+                msg,
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodyMedium,
             )
-            Spacer(Modifier.height(8.dp))
-            Text(nombre.trim(), fontSize = 26.sp, fontWeight = FontWeight.Bold)
-            Text("RUT: $rut", fontSize = 18.sp)
-            Spacer(Modifier.height(8.dp))
-            Text("Servicio: $servicio", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-            Text("Precio: $$precio", fontSize = 32.sp, fontWeight = FontWeight.ExtraBold, color = TotemBlue)
-            Spacer(Modifier.height(8.dp))
-            Text("N° $ticketNumero", style = MaterialTheme.typography.bodyMedium)
-            Spacer(Modifier.height(12.dp))
-            // QR del ticket: usa el qrToken real del backend (Sprint 3.2). Si
-            // por algun motivo no viene, fallback a uno sintetico para no romper
-            // la UI (tickets viejos sin qrToken).
-            val qrReal = qrToken ?: "CSAE-$ticketNumero-$rut"
-            val qrBitmap = remember(qrReal) {
-                ServiceLocator.printerService.generarQrBitmap(qrReal, sizePx = 256)
-            }
-            qrBitmap?.let { bmp ->
-                androidx.compose.foundation.Image(
-                    bitmap = bmp.asImageBitmap(),
-                    contentDescription = "QR del ticket",
-                    modifier = Modifier.size(200.dp),
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        OutlinedButton(
+            onClick = onBuscar,
+            enabled = !loading && rut.isNotBlank(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(72.dp),
+            shape = MaterialTheme.shapes.medium,
+        ) {
+            if (loading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(24.dp),
+                    strokeWidth = 2.dp,
                 )
+                Spacer(Modifier.width(12.dp))
+                Text("Buscando...", fontSize = 22.sp)
+            } else {
+                Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(28.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Buscar", fontSize = 22.sp, fontWeight = FontWeight.Medium)
             }
         }
     }
+}
+
+/**
+ * Pantalla 2 — wireframe 5. Lista de servicios como botones outlined
+ * grandes. Seleccionar dispara la generacion del ticket.
+ */
+@Composable
+private fun SeleccionServicioStep(
+    servicios: List<Servicio>,
+    onSelect: (Servicio) -> Unit,
+    onBack: () -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.Top),
+    ) {
+        Spacer(Modifier.height(48.dp))
+
+        Text(
+            "Seleccione servicio",
+            fontSize = 32.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onBackground,
+        )
+
+        Spacer(Modifier.height(24.dp))
+
+        servicios.forEach { s ->
+            OutlinedButton(
+                onClick = { onSelect(s) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(96.dp),
+                shape = MaterialTheme.shapes.medium,
+            ) {
+                Text(s.nombre, fontSize = 26.sp, fontWeight = FontWeight.Medium)
+            }
+        }
+
+        Spacer(Modifier.weight(1f))
+
+        TextButton(onClick = onBack) {
+            Text("Cancelar", fontSize = 16.sp)
+        }
+    }
+}
+
+/**
+ * Pantalla 3 — wireframe 6. Estado de transicion: "Imprimiendo Ticket"
+ * con icono grande de impresora, mientras se completa la llamada a
+ * `consumoRepo.registrar`. No hay botones.
+ */
+@Composable
+private fun ImprimiendoStep() {
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(32.dp, Alignment.CenterVertically),
+    ) {
+        Spacer(Modifier.weight(1f))
+
+        Text(
+            "Imprimiendo Ticket",
+            fontSize = 32.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onBackground,
+        )
+
+        Icon(
+            Icons.Filled.Print,
+            contentDescription = null,
+            modifier = Modifier.size(160.dp),
+            tint = MaterialTheme.colorScheme.onBackground,
+        )
+
+        CircularProgressIndicator(
+            modifier = Modifier.size(48.dp),
+            strokeWidth = 3.dp,
+        )
+
+        Spacer(Modifier.weight(1f))
+    }
+}
+
+/**
+ * Pantalla 4 — ticket con QR mostrado al comensal. Reutiliza el
+ * TicketScreen existente via navegacion interna (no via NavController
+ * para no perder el estado del flujo). Si el operador quiere volver
+ * al inicio, tap "Nuevo".
+ */
+@Composable
+private fun TicketMostradoStep(
+    ticket: Ticket?,
+    onNuevo: () -> Unit,
+) {
+    if (ticket == null) {
+        // No deberia pasar, pero por seguridad.
+        LaunchedEffect(Unit) { onNuevo() }
+        return
+    }
+    TicketScreen(
+        ticket = ticket,
+        esKiosko = true,
+        onNuevo = onNuevo,
+        onCambiarModo = {},  // no-op: no hay back en minimal top bar
+    )
 }

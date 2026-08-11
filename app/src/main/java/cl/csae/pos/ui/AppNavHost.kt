@@ -79,6 +79,7 @@ fun CsaeNavHost() {
         // ====== Sprint 3.2: selector de modo (start por defecto) ======
         composable(Routes.MODE_SELECT) {
             ModeSelectScreen(
+                onSettings = { nav.navigate(Routes.CONFIGURACION) },
                 onSelectModo = { modo ->
                     when (modo) {
                         "TOTEM" -> nav.navigate(Routes.LOGIN_TOTEM)
@@ -169,6 +170,7 @@ fun CsaeNavHost() {
         // ====== TOTEM (sin login del operador, asume JWT ya cargado) ======
         composable(Routes.TOTEM) {
             TotemScreen(
+                onSettings = { nav.navigate(Routes.CONFIGURACION) },
                 onCambiarModo = cambiarModo,
                 onIrLoginTotem = { nav.navigate(Routes.LOGIN_TOTEM) },
                 onIrConfig = { nav.navigate(Routes.CONFIGURACION) },
