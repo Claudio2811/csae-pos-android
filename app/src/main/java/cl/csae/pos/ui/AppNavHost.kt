@@ -1,7 +1,6 @@
 package cl.csae.pos.ui
 
 import androidx.compose.runtime.*
-import androidx.compose.ui.graphics.Color
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -21,18 +20,16 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 object Routes {
-    // Sprint 3.2
+    // Sprint F9 (2026-08-11): un solo LOGIN. Antes habia LOGIN_TOTEM, LOGIN y
+    // LOGIN_GARZON — redundante y causaba que el operador tuviera que
+    // loguearse cada vez que cambiaba de modo.
     const val MODE_SELECT = "mode_select"
-    const val LOGIN_TOTEM = "login_totem"
-    const val LOGIN_GARZON = "login_garzon"
+    const val LOGIN = "login"
     const val TOTEM = "totem"
     const val POS = "pos"
     const val CONSUMOS = "consumos"
     const val CONFIGURACION = "configuracion"
     const val GARZON = "garzon"
-
-    // Existentes
-    const val LOGIN = "login"
     const val DASHBOARD = "dashboard"
     const val TICKET = "ticket/{numero}"
     fun ticket(numero: String) = "ticket/$numero"
@@ -76,83 +73,12 @@ fun CsaeNavHost() {
     }
 
     NavHost(navController = nav, startDestination = startRoute!!) {
-        // ====== Sprint 3.2: selector de modo (start por defecto) ======
-        composable(Routes.MODE_SELECT) {
-            ModeSelectScreen(
-                onSettings = { nav.navigate(Routes.CONFIGURACION) },
-                onSelectModo = { modo ->
-                    when (modo) {
-                        "TOTEM" -> nav.navigate(Routes.LOGIN_TOTEM)
-                        "POS" -> {
-                            // Si ya esta logueado, vamos al dashboard. Si no, login.
-                            scope.launch {
-                                val logged = ServiceLocator.authRepo.isLoggedIn.first()
-                                if (logged) {
-                                    nav.navigate(Routes.DASHBOARD) {
-                                        popUpTo(Routes.MODE_SELECT) { inclusive = true }
-                                    }
-                                } else {
-                                    nav.navigate(Routes.LOGIN) {
-                                        popUpTo(Routes.MODE_SELECT) { inclusive = true }
-                                    }
-                                }
-                            }
-                        }
-                        "GARZON" -> {
-                            scope.launch {
-                                val logged = ServiceLocator.authRepo.isLoggedIn.first()
-                                if (logged) {
-                                    nav.navigate(Routes.GARZON) {
-                                        popUpTo(Routes.MODE_SELECT) { inclusive = true }
-                                    }
-                                } else {
-                                    nav.navigate(Routes.LOGIN_GARZON) {
-                                        popUpTo(Routes.MODE_SELECT) { inclusive = true }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                },
-            )
-        }
-
-        // ====== Login TOTEM (branding azul) ======
-        composable(Routes.LOGIN_TOTEM) {
-            LoginScreen(
-                onLoginOk = { u ->
-                    usuario = u
-                    nav.navigate(Routes.TOTEM) {
-                        popUpTo(Routes.MODE_SELECT) { inclusive = true }
-                    }
-                },
-                headerTitle = "CSAE POS - Tótem",
-                headerSubtitle = "Login operador del casino",
-                brandColor = Color(0xFF1565C0),
-            )
-        }
-
-        // ====== Login GARZON (branding café) ======
-        composable(Routes.LOGIN_GARZON) {
-            LoginScreen(
-                onLoginOk = { u ->
-                    usuario = u
-                    // Bajar catalog para que la validacion de tickets tenga info.
-                    scope.launch { ServiceLocator.catalogRepo.refresh() }
-                    nav.navigate(Routes.GARZON) {
-                        popUpTo(Routes.MODE_SELECT) { inclusive = true }
-                    }
-                },
-                headerTitle = "CSAE POS - Garzón",
-                headerSubtitle = "Login para escanear QR",
-                brandColor = Color(0xFF6D4C41),
-            )
-        }
-
-        // ====== Login (modo POS, branding verde) ======
-        // Sprint 3.3: el login exitoso va al selector de modo (no directo al
-        // dashboard). Asi el usuario elige TOTEM / POS / GARZON despues de
-        // autenticarse, y la trazabilidad se mantiene (siempre sabemos quien es).
+        // ====== Login unico (Sprint F9 2026-08-11) ======
+        // Antes habia LOGIN_TOTEM, LOGIN y LOGIN_GARZON (3 pantallas con la
+        // misma UI que forzaban re-login al cambiar de modo). Ahora es un
+        // solo LOGIN, y el ModeSelectScreen filtra los modos segun el rol.
+        // El LoginScreen rechaza usuarios empresa (AdminEmpresa / GestorComensales)
+        // con un mensaje claro — esa app es solo para operadores del casino.
         composable(Routes.LOGIN) {
             LoginScreen(
                 onLoginOk = { u ->
@@ -161,19 +87,40 @@ fun CsaeNavHost() {
                         popUpTo(Routes.LOGIN) { inclusive = true }
                     }
                 },
-                headerTitle = "CSAE POS",
-                headerSubtitle = "Control de Servicios de Alimentación",
-                brandColor = null,  // default primary
             )
         }
 
-        // ====== TOTEM (sin login del operador, asume JWT ya cargado) ======
+        // ====== Sprint 3.2: selector de modo (start por defecto) ======
+        // Filtra los botones segun el rol del usuario logueado:
+        //   - OperadorPos: solo "Caja"
+        //   - Garzon:      solo "Garzon"
+        //   - AdminCasino / SupervisorCasino / SuperAdmin: los 3
+        //   - AdminEmpresa: NO entra a la app (rechazado en LoginScreen)
+        composable(Routes.MODE_SELECT) {
+            ModeSelectScreen(
+                usuario = usuario,
+                onSettings = { nav.navigate(Routes.CONFIGURACION) },
+                onSelectModo = { modo ->
+                    when (modo) {
+                        "TOTEM" -> nav.navigate(Routes.TOTEM) {
+                            popUpTo(Routes.MODE_SELECT) { inclusive = true }
+                        }
+                        "POS" -> nav.navigate(Routes.DASHBOARD) {
+                            popUpTo(Routes.MODE_SELECT) { inclusive = true }
+                        }
+                        "GARZON" -> nav.navigate(Routes.GARZON) {
+                            popUpTo(Routes.MODE_SELECT) { inclusive = true }
+                        }
+                    }
+                },
+            )
+        }
+
+        // ====== TOTEM (asume JWT ya cargado del login) ======
         composable(Routes.TOTEM) {
             TotemScreen(
                 onSettings = { nav.navigate(Routes.CONFIGURACION) },
                 onCambiarModo = cambiarModo,
-                onIrLoginTotem = { nav.navigate(Routes.LOGIN_TOTEM) },
-                onIrConfig = { nav.navigate(Routes.CONFIGURACION) },
             )
         }
 

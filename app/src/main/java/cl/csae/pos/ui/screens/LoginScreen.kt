@@ -63,6 +63,18 @@ fun LoginScreen(
             val result = ServiceLocator.authRepo.login(usuario.trim(), password)
             result
                 .onSuccess { u ->
+                    // Sprint F9 (2026-08-11): rechazar usuarios empresa. Esta
+                    // app POS es solo para operadores del casino (AdminCasino,
+                    // OperadorPos, Garzon, etc). Los AdminEmpresa /
+                    // GestorComensales de empresa deben usar el Portal Web.
+                    val rol = u.rol
+                    if (rol == "AdminEmpresa" || rol == "GestorComensales") {
+                        ServiceLocator.authRepo.logout()
+                        loading = false
+                        error = "Esta app es solo para operadores del casino. " +
+                            "Los usuarios de empresa usan el Portal Web."
+                        return@onSuccess
+                    }
                     // Bajar el catalog en background (no bloquea el login).
                     val cat = ServiceLocator.catalogRepo.refresh()
                     if (cat.isFailure) {
