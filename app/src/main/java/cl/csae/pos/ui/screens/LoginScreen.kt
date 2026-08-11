@@ -1,5 +1,6 @@
 package cl.csae.pos.ui.screens
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -13,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -127,6 +129,13 @@ fun LoginScreen(
             verticalArrangement = Arrangement.spacedBy(20.dp, Alignment.Top),
         ) {
             Spacer(Modifier.height(48.dp))
+
+            // Sprint F14 (2026-08-11): logo CSAE arriba del titulo.
+            Image(
+                painter = painterResource(id = cl.csae.pos.R.drawable.csae_logo),
+                contentDescription = "CSAE",
+                modifier = Modifier.size(80.dp).padding(bottom = 8.dp),
+            )
 
             // Titulo "Iniciar sesion" (wireframe 1)
             Text(

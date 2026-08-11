@@ -115,6 +115,11 @@ fun POSScreen(
                 comensal = null
                 servicioSeleccionado = null
                 rut = ""
+                // Sprint F14 (2026-08-11): guardar el ticket en el cache ANTES de
+                // navegar. Antes esto se hacia en el LaunchedEffect del TicketScreen,
+                // pero el TicketScreen no se renderizaba si el ticket no estaba en
+                // el cache (pantalla en blanco, race condition en AppNavHost).
+                ServiceLocator.ticketCache.agregar(t)
                 onTicketGenerado(t)
             }.onFailure { e ->
                 error = e.message ?: "Error generando ticket"

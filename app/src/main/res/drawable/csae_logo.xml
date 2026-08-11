@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Sprint F14 (2026-08-11): logo del producto CSAE para Android.
+  Replica del SVG web (wwwroot/csae-logo-icon.svg) pero en vector drawable
+  para que escale perfecto en cualquier densidad.
+  Color primario #1976d2 (azul corporativo).
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="64dp"
+    android:height="64dp"
+    android:viewportWidth="64"
+    android:viewportHeight="64">
+
+    <!-- Fondo circular con gradiente -->
+    <path
+        android:pathData="M32,2 A30,30 0 1 1 32,62 A30,30 0 1 1 32,2 Z"
+        android:fillColor="#1976d2"/>
+
+    <!-- Plato (anillo interior) -->
+    <path
+        android:pathData="M32,10 A22,22 0 1 0 32,54 A22,22 0 1 0 32,10 Z"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2"
+        android:strokeAlpha="0.4"/>
+
+    <!-- Cuchara (izquierda) -->
+    <path
+        android:pathData="M23,16 m-4,0 a4,6 0 1,0 8,0 a4,6 0 1,0 -8,0"
+        android:fillColor="#FFFFFF"/>
+    <path
+        android:pathData="M22,22 h2 v20 h-2 z"
+        android:fillColor="#FFFFFF"/>
+
+    <!-- Tenedor (derecha) -->
+    <path
+        android:pathData="M36,16 h1.5 v6 h-1.5 z"
+        android:fillColor="#FFFFFF"/>
+    <path
+        android:pathData="M39,16 h1.5 v6 h-1.5 z"
+        android:fillColor="#FFFFFF"/>
+    <path
+        android:pathData="M42,16 h1.5 v6 h-1.5 z"
+        android:fillColor="#FFFFFF"/>
+    <path
+        android:pathData="M36,21 h8 v2 h-8 z"
+        android:fillColor="#FFFFFF"/>
+    <path
+        android:pathData="M39,22 h2 v24 h-2 z"
+        android:fillColor="#FFFFFF"/>
+</vector>
