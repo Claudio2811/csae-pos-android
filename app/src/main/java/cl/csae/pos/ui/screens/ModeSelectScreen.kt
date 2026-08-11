@@ -3,6 +3,8 @@ package cl.csae.pos.ui.screens
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -11,6 +13,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cl.csae.pos.model.UsuarioPos
+import cl.csae.pos.di.ServiceLocator
 import cl.csae.pos.ui.components.MinimalTopBar
 
 /**
@@ -40,6 +43,10 @@ fun ModeSelectScreen(
     onSettings: () -> Unit = {},
     usuario: UsuarioPos? = null,
 ) {
+    // F18.x: casino actual (cacheado en AuthStore). Mostramos el nombre como
+    // subtitulo para que el operador sepa en que casino esta parado.
+    val casinoTheme by ServiceLocator.authRepo.currentCasinoTheme
+        .collectAsState(initial = null)
     val modosDisponibles = remember(usuario?.rol) {
         when (usuario?.rol) {
             "OperadorPos" -> listOf("POS" to "Caja")
@@ -65,6 +72,20 @@ fun ModeSelectScreen(
             verticalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterVertically),
         ) {
             Spacer(Modifier.weight(1f))
+
+            // F18.x: nombre del casino como subtitulo. El logo del casino
+            // (data URI inline del F17) todavia no se muestra aca — eso
+            // queda para F18.3 cuando se agregue un helper para decodear
+            // data:image/png;base64,... a ImageBitmap en Compose.
+            casinoTheme?.razonSocial?.let { nombre ->
+                Text(
+                    nombre,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                    textAlign = TextAlign.Center,
+                )
+            }
 
             if (modosDisponibles.isEmpty()) {
                 // Empresa user o rol desconocido — LoginScreen deberia haber
