@@ -1,10 +1,13 @@
 package cl.csae.pos.data.repository
 
+import android.content.Context
+import android.provider.Settings
 import cl.csae.pos.data.api.ApiError
 import cl.csae.pos.data.api.CasinoThemeDto
 import cl.csae.pos.data.api.LoginRequest
 import cl.csae.pos.data.api.PosApiService
 import cl.csae.pos.data.prefs.AuthStore
+import cl.csae.pos.data.selection.DispositivoPosActual
 import cl.csae.pos.model.UsuarioPos
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -41,6 +44,8 @@ import kotlinx.serialization.json.Json
 class AuthRepository(
     private val api: PosApiService,
     private val authStore: AuthStore,
+    private val dispositivoPosActual: DispositivoPosActual,
+    private val appContext: Context,
 ) {
     private val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
 
@@ -144,6 +149,11 @@ class AuthRepository(
                 // Ignorar: el user podria no tener casino (AdminEmpresa)
             }
 
+            // F19: reconciliador al login. Auto-selecciona el dispositivo POS
+            // del operador si el AndroidId del telefono matchea uno del casino.
+            // No fatal si falla — el operador puede elegir manualmente.
+            reconciliarDispositivoPos()
+
             Result.success(
                 UsuarioPos(
                     username = body.email,
@@ -163,6 +173,47 @@ class AuthRepository(
         // incluyendo los de casino (casinoId, colorPrimario, etc).
         authStore.clear()
         jwtCache = null
+    }
+
+    /**
+     * F19: reconciliador al login. Pregunta al backend la lista de
+     * dispositivos POS del casino y matchea el AndroidId del telefono
+     * contra `androidId` de cada uno. Si hay match, auto-selecciona.
+     * Si no (dispositivo nuevo o no registrado por el admin), deja
+     * la seleccion en null y la UI lo muestra como "Sin asignar" —
+     * el operador lo puede elegir manualmente en Configuracion.
+     *
+     * No es fatal si falla: el login sigue OK y el operador puede
+     * seleccionar a mano.
+     */
+    private suspend fun reconciliarDispositivoPos() {
+        try {
+            val androidId = Settings.Secure.getString(
+                appContext.contentResolver,
+                Settings.Secure.ANDROID_ID,
+            )
+            if (androidId.isNullOrBlank()) return
+
+            // Si ya hay un dispositivo seleccionado en DataStore, no
+            // sobreescribimos — la seleccion del operador gana. Solo
+            // auto-seleccionamos si no hay ninguna.
+            if (dispositivoPosActual.current.value != null) return
+
+            val resp = api.listarDispositivos()
+            if (!resp.isSuccessful) return
+            val match = resp.body().orEmpty()
+                .firstOrNull { it.activo && it.androidId == androidId }
+            if (match != null) {
+                dispositivoPosActual.setDispositivo(
+                    id = match.id,
+                    nombre = match.nombre,
+                    codigo = match.androidId,
+                    tipo = match.tipo,
+                )
+            }
+        } catch (_: Exception) {
+            // Silenciar: es un nice-to-have, no debe romper el login.
+        }
     }
 
     /**

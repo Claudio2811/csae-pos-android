@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import cl.csae.pos.BuildConfig
+import cl.csae.pos.data.api.DispositivoPosDto
 import cl.csae.pos.di.ServiceLocator
 import cl.csae.pos.ui.components.CambiarModoTopBar
 import kotlinx.coroutines.launch
@@ -55,6 +56,13 @@ fun ConfiguracionScreen(
     // F17: estado del boton "Refrescar tema del casino". Permite al operador
     // ver cambios de color/logo sin desloguearse.
     var refreshingTheme by remember { mutableStateOf(false) }
+    // F19: estado del selector de dispositivo POS. La lista se carga al abrir
+    // la pantalla y se muestra en un dialog (patron igual a la impresora BT).
+    var dispositivos by remember { mutableStateOf<List<DispositivoPosDto>>(emptyList()) }
+    var loadingDispositivos by remember { mutableStateOf(false) }
+    var showDispositivoDialog by remember { mutableStateOf(false) }
+    val dispositivoActual by ServiceLocator.dispositivoPosActual.current
+        .collectAsState(initial = null)
     val snackbar = remember { SnackbarHostState() }
 
     // Cargar estado inicial
@@ -62,6 +70,26 @@ fun ConfiguracionScreen(
         modoPreferido = ServiceLocator.authStore.getModoPreferido()
         macImpresora = ServiceLocator.authStore.getImpresoraMac()
         // El nombre lo recuperamos del dispositivo emparejado actual.
+    }
+
+    // F19: cada vez que se abre el dialog, recarga la lista de dispositivos
+    // del casino actual. Asi si el admin agrego uno nuevo, el operador lo ve.
+    LaunchedEffect(showDispositivoDialog) {
+        if (showDispositivoDialog) {
+            loadingDispositivos = true
+            try {
+                val resp = ServiceLocator.posApiService.listarDispositivos()
+                if (resp.isSuccessful) {
+                    dispositivos = resp.body().orEmpty().filter { it.activo }
+                } else {
+                    snackbar.showSnackbar("Error al cargar dispositivos: ${resp.code()}")
+                }
+            } catch (t: Throwable) {
+                snackbar.showSnackbar("Error de red: ${t.message ?: "desconocido"}")
+            } finally {
+                loadingDispositivos = false
+            }
+        }
     }
 
     // Re-leer nombre del dispositivo guardado si la MAC cambio.
@@ -124,6 +152,23 @@ fun ConfiguracionScreen(
             printing = false
             r.onSuccess { printStatus = "OK: prueba enviada a ${nombreImpresora ?: mac}." }
              .onFailure { printStatus = "Error: ${it.message}" }
+        }
+    }
+
+    /**
+     * F19: el operador eligio un dispositivo del dialog. Persiste en DataStore
+     * via DispositivoPosActual (que ya dispara el StateFlow y notifica a la UI).
+     */
+    fun seleccionarDispositivo(d: DispositivoPosDto) {
+        scope.launch {
+            ServiceLocator.dispositivoPosActual.setDispositivo(
+                id = d.id,
+                nombre = d.nombre,
+                codigo = d.androidId,
+                tipo = d.tipo,
+            )
+            showDispositivoDialog = false
+            snackbar.showSnackbar("Dispositivo seleccionado: ${d.nombre}")
         }
     }
 
@@ -260,7 +305,33 @@ fun ConfiguracionScreen(
                 }
             }
 
-            // Seccion 4: Version
+            // Seccion 4: Dispositivo POS (F19)
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Dispositivo POS", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Con que dispositivo fisico operas. Si no aparece ninguno, consulta al admin del casino para que lo registre.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    )
+                    val nombreDisp = dispositivoActual?.nombre ?: "Sin asignar"
+                    val androidId = dispositivoActual?.codigo
+                    Text(
+                        if (androidId == null) nombreDisp
+                        else "$nombreDisp  (${androidId.take(8)})",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    OutlinedButton(onClick = { showDispositivoDialog = true }) {
+                        Text(if (dispositivoActual == null) "Seleccionar dispositivo" else "Cambiar dispositivo")
+                    }
+                }
+            }
+
+            // Seccion 5: Version
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -278,6 +349,53 @@ fun ConfiguracionScreen(
         PrinterPickerDialog(
             onDismiss = { showPrinterDialog = false },
             onSelect = { selectImpresora(it) },
+        )
+    }
+
+    // F19: dialog de seleccion de dispositivo POS. Muestra la lista que se
+    // cargo via listarDispositivos() al abrir el dialog. Cada item es un
+    // boton con nombre + androidId corto + tipo. Click selecciona y cierra.
+    if (showDispositivoDialog) {
+        AlertDialog(
+            onDismissRequest = { showDispositivoDialog = false },
+            title = { Text("Seleccionar dispositivo POS") },
+            text = {
+                if (loadingDispositivos) {
+                    Text("Cargando...")
+                } else if (dispositivos.isEmpty()) {
+                    Text("No hay dispositivos activos en este casino. Consulta al admin para que registre uno.")
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        dispositivos.forEach { d ->
+                            val isSelected = dispositivoActual?.id == d.id
+                            OutlinedButton(
+                                onClick = { seleccionarDispositivo(d) },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Column(
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                    horizontalAlignment = Alignment.Start,
+                                ) {
+                                    Text(
+                                        if (isSelected) "${d.nombre}  *actual*" else d.nombre,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                    )
+                                    Text(
+                                        "${d.tipoNombre}  -  ${d.androidId.take(8)}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showDispositivoDialog = false }) {
+                    Text("Cerrar")
+                }
+            },
         )
     }
 }

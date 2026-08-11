@@ -72,4 +72,20 @@ interface PosApiService {
 
     @POST("api/v1/pos/tickets/consumir")
     suspend fun consumirTicket(@Body req: ConsumirTicketRequest): Response<ConsumirTicketResponse>
+
+    // ============= DISPOSITIVOS POS (F19) =============
+
+    /**
+     * F19: lista los dispositivos POS/kiosko del casino actual. Usado por:
+     * - El reconciliador al login para auto-seleccionar el dispositivo del
+     *   operador por AndroidId.
+     * - La UI de ConfiguracionScreen (dropdown "Dispositivo POS") para
+     *   que el operador elija manualmente si el reconciliador no matcheo.
+     *
+     * `incluirInactivos=false` (default) filtra los soft-deleted.
+     */
+    @GET("api/v1/dispositivos-pos")
+    suspend fun listarDispositivos(
+        @Query("incluirInactivos") incluirInactivos: Boolean = false,
+    ): Response<List<DispositivoPosDto>>
 }

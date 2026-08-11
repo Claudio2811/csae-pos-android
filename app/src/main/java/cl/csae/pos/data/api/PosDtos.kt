@@ -173,3 +173,37 @@ data class TicketInfoDto(
     val generadoUtc: String,
     val consumidoEnUtc: String? = null,
 )
+
+// ============= DISPOSITIVOS POS (F19) =============
+
+/**
+ * F19: dispositivo POS del casino. El operador selecciona uno de la lista
+ * que devuelve GET /api/v1/dispositivos-pos, y la eleccion se persiste en
+ * DataStore (via DispositivoPosActual). El backend matchea el AndroidId
+ * del telefono contra esta lista al hacer login.
+ *
+ * Campos principales:
+ * - id: GUID del dispositivo (establecido por el admin del casino).
+ * - nombre: nombre amigable (ej: "POS Caja 1", "TOTEM Entrada").
+ * - androidId: codigo unico del dispositivo (ANDROID_ID). El reconciliador
+ *   al login matchea este campo contra ANDROID_ID.Settings.Secure.
+ * - tipo: 1 = OperadorPos (POS atendido), 2 = Kiosko (TOTEM self-service).
+ * - activo: false = soft-deleted, se filtra por defecto en la lista.
+ */
+@Serializable
+data class DispositivoPosDto(
+    val id: String,
+    val restauranteId: String,
+    val nombre: String,
+    val androidId: String,
+    val modelo: String? = null,
+    val tipo: Int,
+    val tipoNombre: String,
+    val usuarioAsignadoId: String? = null,
+    val sucursalId: String? = null,
+    val sucursalNombre: String? = null,
+    val kioskoToken: String? = null,
+    val activo: Boolean,
+    val createdAt: String,
+    val updatedAt: String,
+)

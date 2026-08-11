@@ -36,7 +36,9 @@ object ServiceLocator {
         )
     }
 
-    val authRepo: AuthRepository by lazy { AuthRepository(posApiService, authStore) }
+    val authRepo: AuthRepository by lazy {
+        AuthRepository(posApiService, authStore, dispositivoPosActual, appContext)
+    }
 
     val catalogRepo: CatalogRepository by lazy { CatalogRepository(posApiService) }
 
