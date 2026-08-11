@@ -52,6 +52,9 @@ fun ConfiguracionScreen(
     var printStatus by remember { mutableStateOf<String?>(null) }
     var printing by remember { mutableStateOf(false) }
     var permDeniedSnack by remember { mutableStateOf(false) }
+    // F17: estado del boton "Refrescar tema del casino". Permite al operador
+    // ver cambios de color/logo sin desloguearse.
+    var refreshingTheme by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
 
     // Cargar estado inicial
@@ -148,6 +151,22 @@ fun ConfiguracionScreen(
         }
     }
 
+    /**
+     * F17: descarga el casino actual desde el API y guarda colores/logo en
+     * AuthStore. El Flow `currentCasinoTheme` emite el nuevo valor, y el
+     * `CsaePosTheme` del NavHost recompone con el color/logo actualizado.
+     */
+    fun refrescarTema() {
+        if (refreshingTheme) return
+        refreshingTheme = true
+        scope.launch {
+            val r = ServiceLocator.authRepo.refreshCasinoTheme()
+            refreshingTheme = false
+            r.onSuccess { snackbar.showSnackbar("Tema del casino actualizado.") }
+             .onFailure { snackbar.showSnackbar("Error al refrescar: ${it.message ?: "desconocido"}") }
+        }
+    }
+
     Scaffold(
         topBar = {
             CambiarModoTopBar(
@@ -223,7 +242,25 @@ fun ConfiguracionScreen(
                 }
             }
 
-            // Seccion 3: Version
+            // Seccion 3: Tema del casino (F17)
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Tema del casino", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Si el admin del casino cambio el color o el logo, presiona aqui para ver el cambio sin desloguearte.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    )
+                    OutlinedButton(onClick = { refrescarTema() }, enabled = !refreshingTheme) {
+                        Text(if (refreshingTheme) "Actualizando..." else "Refrescar tema")
+                    }
+                }
+            }
+
+            // Seccion 4: Version
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
