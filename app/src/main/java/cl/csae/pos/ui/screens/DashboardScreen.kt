@@ -19,6 +19,7 @@ import cl.csae.pos.data.repository.TicketCacheRepository
 import cl.csae.pos.di.ServiceLocator
 import cl.csae.pos.model.Kpi
 import cl.csae.pos.model.UsuarioPos
+import cl.csae.pos.ui.components.CasinoLogoImage
 import kotlinx.coroutines.launch
 
 /**
@@ -39,6 +40,9 @@ fun DashboardScreen(
     val scope = rememberCoroutineScope()
     var refreshing by remember { mutableStateOf(false) }
     var refreshError by remember { mutableStateOf<String?>(null) }
+    // F18.3: logo del casino para el TopBar.
+    val casinoTheme by ServiceLocator.authRepo.currentCasinoTheme
+        .collectAsState(initial = null)
 
     val kpis = remember(tickets) {
         listOf(
@@ -52,6 +56,16 @@ fun DashboardScreen(
     Scaffold(
         topBar = {
             TopAppBar(
+                // F18.3: logo del casino a la izquierda del TopBar (navigation
+                // icon). Reemplaza el menu hamburguesa default por la marca
+                // visual del casino. Si no hay logo, cae al csae_logo.
+                navigationIcon = {
+                    CasinoLogoImage(
+                        logoUrl = casinoTheme?.logoUrl,
+                        contentDescription = casinoTheme?.razonSocial ?: "CSAE",
+                        modifier = Modifier.size(40.dp).padding(start = 8.dp),
+                    )
+                },
                 title = {
                     Column {
                         Text("Hola, ${usuario.displayName}", style = MaterialTheme.typography.titleMedium)

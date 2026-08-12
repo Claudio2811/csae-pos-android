@@ -35,6 +35,7 @@ import cl.csae.pos.data.bluetooth.TicketPdfGenerator
 import cl.csae.pos.di.ServiceLocator
 import cl.csae.pos.model.Ticket
 import cl.csae.pos.ui.components.CambiarModoTopBar
+import cl.csae.pos.ui.components.CasinoLogoImage
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
@@ -69,6 +70,12 @@ fun TicketScreen(
     // Sprint 3.2.1: si la impresion fallo, guardamos el path del PDF generado
     // para que el operador pueda abrirlo desde el Snackbar de accion.
     var pdfFallbackPath by remember { mutableStateOf<String?>(null) }
+
+    // F18.3: el ticket se imprime con el logo del casino en el header.
+    // Antes era texto hardcoded ("CSAE POS" / "Casino Salamanca"). Ahora
+    // sale del CasinoTheme persistido en el AuthStore al login.
+    val casinoTheme by ServiceLocator.authRepo.currentCasinoTheme
+        .collectAsState(initial = null)
 
     // Auto-volver en modo kiosko despues de 10s
     LaunchedEffect(esKiosko) {
@@ -159,21 +166,27 @@ fun TicketScreen(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
                     horizontalAlignment = Alignment.Start,
                 ) {
-                    // Header del casino (centrado, negrita)
+                    // F18.3: header del casino con logo (si tiene) o texto.
+                    // El logo del casino arriba + nombre debajo. Si no hay
+                    // logo, CasinoLogoImage cae al csae_logo y el nombre
+                    // sigue apareciendo (de casinoTheme o default "CSAE POS").
+                    Box(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CasinoLogoImage(
+                            logoUrl = casinoTheme?.logoUrl,
+                            contentDescription = casinoTheme?.razonSocial ?: "CSAE",
+                            modifier = Modifier.size(width = 120.dp, height = 48.dp),
+                        )
+                    }
+                    val casinoNombre = casinoTheme?.razonSocial ?: "CSAE POS"
                     Text(
-                        "CSAE POS",
+                        casinoNombre,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
                         fontSize = 16.sp,
                         color = Color.Black,
-                        modifier = Modifier.fillMaxWidth(),
-                        textAlign = TextAlign.Center,
-                    )
-                    Text(
-                        "Casino Salamanca",
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 11.sp,
-                        color = Color(0xFF555555),
                         modifier = Modifier.fillMaxWidth(),
                         textAlign = TextAlign.Center,
                     )

@@ -117,6 +117,12 @@ dependencies {
     // ZXing core para generar QR como Bitmap (preview del ticket).
     implementation("com.google.zxing:core:3.5.3")
 
+    // Coil (Sprint F18.3, 2026-08-11): AsyncImage para descargar el logo
+    // del casino cuando esta en https://... (Azure Blob Storage). 2.7.0
+    // = ultima estable al 2026-08-02. 16 KB page-aligned (cumple Google
+    // Play 16 KB page size requirement, deadline Feb 1 2027).
+    implementation("io.coil-kt:coil-compose:2.7.0")
+
     // Tests
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")

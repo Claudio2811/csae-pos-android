@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.sp
 import cl.csae.pos.di.ServiceLocator
 import cl.csae.pos.model.UsuarioPos
 import cl.csae.pos.ui.components.AppTextField
+import cl.csae.pos.ui.components.CasinoLogoImage
 import kotlinx.coroutines.launch
 
 /**
@@ -56,6 +57,14 @@ fun LoginScreen(
     var loading by remember { mutableStateOf(false) }
     val focus = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
+
+    // F18.3: el operador puede tener un logo del casino persistido en
+    // AuthStore (de un login anterior en este mismo telefono, o porque
+    // el admin configuro un logo a nivel casino que se ve antes de
+    // loguearse). Mostrarlo arriba del titulo para reforzar la marca.
+    // Si el casino no tiene logo, CasinoLogoImage cae al csae_logo.
+    val casinoTheme by ServiceLocator.authRepo.currentCasinoTheme
+        .collectAsState(initial = null)
 
     // Validaciones locales (reflejan las del LoginRequestValidator backend).
     val usuarioError: String? = when {
@@ -130,10 +139,13 @@ fun LoginScreen(
         ) {
             Spacer(Modifier.height(48.dp))
 
-            // Sprint F14 (2026-08-11): logo CSAE arriba del titulo.
-            Image(
-                painter = painterResource(id = cl.csae.pos.R.drawable.csae_logo),
-                contentDescription = "CSAE",
+            // Sprint F18.3 (2026-08-11): logo del casino (o CSAE si no hay).
+            // Soporta data URI inline (F17) y URL https (F18 Azure Blob).
+            // El casinoTheme puede ser null si nunca hubo login en este
+            // telefono, en cuyo caso el helper usa el drawable csae_logo.
+            CasinoLogoImage(
+                logoUrl = casinoTheme?.logoUrl,
+                contentDescription = casinoTheme?.razonSocial ?: "CSAE",
                 modifier = Modifier.size(80.dp).padding(bottom = 8.dp),
             )
 

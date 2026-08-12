@@ -14,6 +14,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cl.csae.pos.model.UsuarioPos
 import cl.csae.pos.di.ServiceLocator
+import cl.csae.pos.ui.components.CasinoLogoImage
 import cl.csae.pos.ui.components.MinimalTopBar
 
 /**
@@ -73,10 +74,16 @@ fun ModeSelectScreen(
         ) {
             Spacer(Modifier.weight(1f))
 
-            // F18.x: nombre del casino como subtitulo. El logo del casino
-            // (data URI inline del F17) todavia no se muestra aca — eso
-            // queda para F18.3 cuando se agregue un helper para decodear
-            // data:image/png;base64,... a ImageBitmap en Compose.
+            // F18.3 (2026-08-11): logo del casino arriba del subtitulo.
+            // Si el casino no tiene logo, CasinoLogoImage usa csae_logo.
+            // Soporta data URI inline (F17) y URL https (F18 Azure Blob).
+            CasinoLogoImage(
+                logoUrl = casinoTheme?.logoUrl,
+                contentDescription = casinoTheme?.razonSocial ?: "CSAE",
+                modifier = Modifier.size(96.dp).padding(bottom = 8.dp),
+            )
+
+            // F18.x: nombre del casino como subtitulo debajo del logo.
             casinoTheme?.razonSocial?.let { nombre ->
                 Text(
                     nombre,
