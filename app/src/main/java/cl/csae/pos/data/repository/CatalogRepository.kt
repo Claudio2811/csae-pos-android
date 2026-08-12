@@ -34,6 +34,18 @@ class CatalogRepository(private val api: PosApiService) {
     @Volatile private var cache: PosCatalogResponseDto? = null
     @Volatile private var lastSync: Long = 0
 
+    // F18.2: mapa en memoria de que servicios ya consumio cada comensal HOY.
+    // Key = membresiaId, value = set de servicioId. Se popula via
+    // marcarConsumido() despues de cada consumo OK. Se limpia en clear() (logout).
+    //
+    // Trade-off: el cache vive en memoria, asi que si el operador cierra la
+    // app y la reabre, este mapa se pierde y yaConsumido vuelve a false. El
+    // backend igual valida la regla unicoPorDia con 409 como red de seguridad,
+    // asi que no es bug — solo pierde el feedback visual de "ya consumido"
+    // entre reinicios. Si en el futuro queremos que sobreviva, lo movemos
+    // a DataStore.
+    @Volatile private var consumidosHoy: Map<String, Set<String>> = emptyMap()
+
     /** Trae el catalog del API (forzando descarga) y lo cachea. */
     suspend fun refresh(): Result<PosCatalogResponseDto> {
         return try {
@@ -65,6 +77,7 @@ class CatalogRepository(private val api: PosApiService) {
         val comensal = c.comensales.firstOrNull { it.comensalId == comensalId } ?: return null
         val empresaRazon = c.empresas.firstOrNull { it.id == comensal.empresaRestauranteId }?.razonSocial
             ?: comensal.empresaRestauranteId
+        val consumidos = consumidosHoy[comensal.membresiaId].orEmpty()
         return Comensal(
             id = comensal.comensalId,
             membresiaId = comensal.membresiaId,
@@ -72,7 +85,12 @@ class CatalogRepository(private val api: PosApiService) {
             nombre = comensal.nombre,
             apellido = comensal.apellido,
             empresa = empresaRazon,
-            servicios = comensal.servicios(comensalesHabilitados = c.serviciosHabilitados, servicios = c.servicios),
+            servicios = comensal.servicios(
+                comensalesHabilitados = c.serviciosHabilitados,
+                servicios = c.servicios,
+                consumidos = consumidos,
+            ),
+            serviciosConsumidosHoy = consumidos,
         )
     }
 
@@ -82,6 +100,7 @@ class CatalogRepository(private val api: PosApiService) {
         val comensal = c.comensales.firstOrNull { it.membresiaId == membresiaId } ?: return null
         val empresaRazon = c.empresas.firstOrNull { it.id == comensal.empresaRestauranteId }?.razonSocial
             ?: comensal.empresaRestauranteId
+        val consumidos = consumidosHoy[membresiaId].orEmpty()
         return Comensal(
             id = comensal.comensalId,
             membresiaId = comensal.membresiaId,
@@ -89,7 +108,12 @@ class CatalogRepository(private val api: PosApiService) {
             nombre = comensal.nombre,
             apellido = comensal.apellido,
             empresa = empresaRazon,
-            servicios = comensal.servicios(comensalesHabilitados = c.serviciosHabilitados, servicios = c.servicios),
+            servicios = comensal.servicios(
+                comensalesHabilitados = c.serviciosHabilitados,
+                servicios = c.servicios,
+                consumidos = consumidos,
+            ),
+            serviciosConsumidosHoy = consumidos,
         )
     }
 
@@ -109,6 +133,7 @@ class CatalogRepository(private val api: PosApiService) {
         } ?: return null
         val empresaRazon = c.empresas.firstOrNull { it.id == comensal.empresaRestauranteId }?.razonSocial
             ?: comensal.empresaRestauranteId
+        val consumidos = consumidosHoy[comensal.membresiaId].orEmpty()
         return Comensal(
             id = comensal.comensalId,
             membresiaId = comensal.membresiaId,
@@ -116,20 +141,53 @@ class CatalogRepository(private val api: PosApiService) {
             nombre = comensal.nombre,
             apellido = comensal.apellido,
             empresa = empresaRazon,
-            servicios = comensal.servicios(comensalesHabilitados = c.serviciosHabilitados, servicios = c.servicios),
+            servicios = comensal.servicios(
+                comensalesHabilitados = c.serviciosHabilitados,
+                servicios = c.servicios,
+                consumidos = consumidos,
+            ),
+            serviciosConsumidosHoy = consumidos,
         )
     }
 
-    /** Lista de servicios para un comensal, dados sus servicios habilitados y el catalog. */
+    /**
+     * F18.2: marca un servicio como consumido hoy para una membresia. Llamado
+     * desde ConsumoRepository.registrar() despues de un 201 OK. Thread-safe
+     * via Mutex (puede ser llamado desde varios coroutines en paralelo).
+     */
+    suspend fun marcarConsumido(membresiaId: String, servicioId: String) {
+        mutex.withLock {
+            val current = consumidosHoy.toMutableMap()
+            val set = current[membresiaId].orEmpty().toMutableSet()
+            set.add(servicioId)
+            current[membresiaId] = set
+            consumidosHoy = current
+        }
+    }
+
+    /**
+     * F18.2: lista de servicios para un comensal, dados sus servicios habilitados
+     * y el catalog. Tambien recibe el set de servicios YA consumidos hoy por
+     * este comensal (sacado de `consumidosHoy` por membresiaId) y setea el
+     * flag `yaConsumido` en cada Servicio. Asi la UI puede deshabilitar el
+     * boton sin pegarle al backend.
+     */
     private fun ComensalCatalogItemDto.servicios(
         comensalesHabilitados: List<ServicioHabilitadoCatalogItemDto>,
-        servicios: List<ServicioCatalogItemDto>
+        servicios: List<ServicioCatalogItemDto>,
+        consumidos: Set<String>,
     ): List<Servicio> {
         val sh = comensalesHabilitados.filter { it.empresaRestauranteId == empresaRestauranteId }
         val sids = sh.map { it.servicioId }.toSet()
         return servicios.filter { sids.contains(it.id) }.map { s ->
             val precio = sh.firstOrNull { it.servicioId == s.id }?.precioClp ?: 0
-            Servicio(id = s.id, nombre = s.nombre, tipo = s.tipo, precio = precio)
+            Servicio(
+                id = s.id,
+                nombre = s.nombre,
+                tipo = s.tipo,
+                precio = precio,
+                yaConsumido = s.id in consumidos,
+            )
         }
     }
 
@@ -146,6 +204,10 @@ class CatalogRepository(private val api: PosApiService) {
     fun clear() {
         cache = null
         lastSync = 0
+        // F18.2: tambien limpiar el mapa de consumidos hoy. Se llama en
+        // logout (ServiceLocator.resetSession) para que un nuevo login
+        // empiece con el cache fresco.
+        consumidosHoy = emptyMap()
     }
 
     private fun parseError(errorBody: String?, code: Int): String {

@@ -75,6 +75,17 @@ class ConsumoRepository(
             }
             val body = resp.body() ?: return Result.failure(IllegalStateException("Respuesta vacia del API."))
 
+            // F18.2: marcar el servicio como consumido en el cache local para
+            // que la siguiente vez que el operador busque este comensal, el
+            // boton de ese servicio aparezca deshabilitado. No bloquea si
+            // falla (el backend ya valido el consumo). Se hace ANTES de armar
+            // el ticket para que la UI ya este actualizada cuando vuelva.
+            try {
+                catalog.marcarConsumido(membresiaId, servicioId)
+            } catch (_: Exception) {
+                // Ignorar: el consumo ya quedo registrado en el backend.
+            }
+
             // Para el ticket local, necesitamos los datos del comensal. Los tenemos
             // en el cache del catalog. Si no esta, intentamos re-bajarlo una vez.
             var comensal = catalog.buscarComensalPorId(body.comensalId)

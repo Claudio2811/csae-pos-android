@@ -29,6 +29,11 @@ data class Comensal(
     val apellido: String?,
     val empresa: String,
     val servicios: List<Servicio>,
+    // F18.2: IDs de servicios que el comensal ya consumio HOY en este casino.
+    // Lo setea CatalogRepository.marcarConsumido() despues de cada registro OK
+    // y se pierde al cerrar la app (cache en memoria). El backend igual rechaza
+    // duplicados con 409 (regla unicoPorDia) como red de seguridad.
+    val serviciosConsumidosHoy: Set<String> = emptySet(),
 )
 
 data class Servicio(
@@ -36,6 +41,9 @@ data class Servicio(
     val nombre: String,
     val tipo: String,         // "Almuerzo", "Cena", "Colacion", "Desayuno"
     val precio: Int,          // CLP
+    // F18.2: true si este comensal ya consumio este servicio HOY.
+    // La UI lo usa para deshabilitar el boton y mostrar "Ya consumido".
+    val yaConsumido: Boolean = false,
 )
 
 data class Ticket(

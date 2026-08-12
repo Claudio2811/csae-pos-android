@@ -256,7 +256,13 @@ fun POSScreen(
                         ServicioCard(
                             servicio = s,
                             seleccionado = servicioSeleccionado?.id == s.id,
-                            onClick = { servicioSeleccionado = s; error = null },
+                            onClick = {
+                                // F18.2: bloquear click si ya fue consumido hoy.
+                                if (!s.yaConsumido) {
+                                    servicioSeleccionado = s
+                                    error = null
+                                }
+                            },
                         )
                     }
 
@@ -296,14 +302,22 @@ fun POSScreen(
 
 @Composable
 private fun ServicioCard(servicio: Servicio, seleccionado: Boolean, onClick: () -> Unit) {
+    // F18.2: si el servicio ya fue consumido hoy, el card se ve gris y
+    // no responde al click. La regla unicoPorDia del backend (ConsumoService)
+    // rechaza con 409 igual — esto es solo feedback visual.
+    val consumido = servicio.yaConsumido
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
-            containerColor = if (seleccionado) MaterialTheme.colorScheme.secondary
-                             else MaterialTheme.colorScheme.surface,
+            containerColor = when {
+                seleccionado -> MaterialTheme.colorScheme.secondary
+                consumido -> MaterialTheme.colorScheme.surface.copy(alpha = 0.4f)
+                else -> MaterialTheme.colorScheme.surface
+            },
             contentColor = if (seleccionado) MaterialTheme.colorScheme.onSecondary
                            else MaterialTheme.colorScheme.onSurface,
         ),
+        enabled = !consumido,
         onClick = onClick,
     ) {
         Row(
@@ -315,8 +329,26 @@ private fun ServicioCard(servicio: Servicio, seleccionado: Boolean, onClick: () 
             Column(modifier = Modifier.weight(1f)) {
                 Text(servicio.nombre, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
                 Text(servicio.tipo, style = MaterialTheme.typography.bodySmall)
+                if (consumido) {
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        "Ya consumido",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                    )
+                }
             }
-            Text("$${servicio.precio}", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Column(horizontalAlignment = Alignment.End) {
+                Text("$${servicio.precio}", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                if (consumido) {
+                    Text(
+                        "hoy",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    )
+                }
+            }
         }
     }
 }
