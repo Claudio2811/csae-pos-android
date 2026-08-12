@@ -1,6 +1,5 @@
 package cl.csae.pos.ui.screens
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -13,8 +12,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -31,24 +28,31 @@ import kotlinx.coroutines.launch
 /**
  * Pantalla de login. Sprint 3.1.2: contra la API real de CSAE.
  *
- * Sprint F8 (2026-08-11): rediseño segun wireframes del usuario. Ahora
- * tiene solo 2 campos (Usuario + Contrasena), sin card wrapper ni
- * titulo grande de marca. Los parametros `headerTitle`, `headerSubtitle`
- * y `brandColor` se mantienen para compatibilidad con AppNavHost pero
- * ya no se renderizan en el layout — la UI es la misma para TOTEM /
- * GARZON / POS.
+ * Sprint F8 (2026-08-11): rediseño segun wireframes del usuario.
+ * Solo 2 campos (Usuario + Contrasena), sin card wrapper ni titulo
+ * grande de marca. La UI es la misma para TOTEM / GARZON / POS.
  *
  * Sprint F13 (2026-08-11): maxLength enforced en los 2 campos (200 chars,
  * mismo limite que el LoginRequestValidator) + supportingText con conteo
  * en vivo "X/200". El boton Ingresar valida localmente largo y no-vacio
  * antes de pegarle a la API.
+ *
+ * Sprint F18.3 (2026-08-11): logo del casino arriba del titulo (si esta
+ * persistido en el AuthStore de un login anterior en este telefono, o
+ * si es un fresh install + tenant unico via endpoint publico futuro).
+ * Si no hay logo, CasinoLogoImage cae al csae_logo del producto.
+ *
+ * **F20 (2026-08-12):** el `onLoginOk` callback ya no navega
+ * manualmente. El [CsaeNavHost] detecta el cambio de `isLoggedIn` a true
+ * via el `LaunchedEffect(isLoggedIn, modoPreferido)` y navega al
+ * destino correspondiente (DASHBOARD / TOTEM / GARZON / MODE_SELECT).
+ * Por eso `onLoginOk` es solo `onSuccess {}` en la llamada de
+ * `AppNavHost`. El parametro se mantiene para extensibilidad futura
+ * (ej: post-login checks adicionales) pero hoy es un no-op.
  */
 @Composable
 fun LoginScreen(
-    onLoginOk: (UsuarioPos) -> Unit,
-    @Suppress("unused") headerTitle: String = "CSAE POS",
-    @Suppress("unused") headerSubtitle: String = "Control de Servicios de Alimentacion",
-    @Suppress("unused") brandColor: Color? = null,
+    onLoginOk: (UsuarioPos) -> Unit = {},
 ) {
     var usuario by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }

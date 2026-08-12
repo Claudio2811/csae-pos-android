@@ -15,8 +15,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -62,7 +60,6 @@ fun POSScreen(
     var servicioSeleccionado by remember { mutableStateOf<Servicio?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(false) }
-    val focusRut = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
 
     fun buscar() {
@@ -202,7 +199,7 @@ fun POSScreen(
                 // editable, entonces al tap aparecia tambien el teclado
                 // nativo del telefono, pisando al custom.
                 readOnly = true,
-                modifier = Modifier.fillMaxWidth().focusRequester(focusRut),
+                modifier = Modifier.fillMaxWidth(),
             )
             Button(
                 onClick = { buscar() },
@@ -298,11 +295,6 @@ fun POSScreen(
             Spacer(Modifier.height(8.dp))
         }
     }
-
-    // No usamos focusRut.requestFocus() porque el RUT se tipea con el keypad
-    // del bottomBar (no con el teclado nativo). Mantengo el FocusRequester
-    // en el codigo por si en el futuro se quiere saltar a teclado nativo.
-    @Suppress("UNUSED_EXPRESSION") focusRut
 }
 
 @Composable

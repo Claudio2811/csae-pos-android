@@ -23,19 +23,25 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * Pantalla del modo TOTEM (sprint 3.2 + 3.3 + F8).
+ * Pantalla del modo TOTEM (sprint 3.2 + 3.3 + F8 + F18.2 + F20).
  *
  * Sprint F8 (2026-08-11): rediseño segun wireframes 3-6 del usuario.
  * Ahora son 4 estados visuales distintos, cada uno con su layout
  * minimalista, todos con TopBar minimal (solo icono de settings):
  *
  *   1. RutInput: input RUT + boton "Buscar" (wireframe 3-4)
- *   2. SeleccionServicio: 3 botones outlined (wireframe 5)
+ *   2. SeleccionServicio: N botones outlined (wireframe 5). Los ya
+ *      consumidos se deshabilitan con "Ya consumido" (F18.2 visual).
  *   3. Imprimiendo: "Imprimiendo Ticket" + icono impresora (wireframe 6)
  *   4. TicketMostrado: pantalla de ticket con QR (existente)
  *
- * Se removio:
- * - NumericKeypad del bottomBar (el operador usa teclado del sistema).
+ * F20 (2026-08-12): el `NumericKeypad` SI esta en el bottomBar (igual
+ * que POS), con la K y la X. El `RutInputField` es readOnly y la unica
+ * via de input es el keypad de abajo. Antes (F8) el operador tenia que
+ * usar el teclado nativo qwerty del telefono, que ademas no mostraba
+ * la K del DV en todos los dispositivos.
+ *
+ * Se removio (F8):
  * - CambiarModoTopBar (reemplazado por MinimalTopBar).
  * - Container azul TotemBlue (ahora usa background del theme).
  * - Cards de "un servicio" / "sin servicios" (reemplazado por
@@ -44,9 +50,6 @@ import kotlinx.coroutines.launch
 @Composable
 fun TotemScreen(
     onSettings: () -> Unit = {},
-    @Suppress("unused") onCambiarModo: () -> Unit = {},
-    @Suppress("unused") onIrLoginTotem: () -> Unit = {},
-    @Suppress("unused") onIrConfig: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var rut by remember { mutableStateOf("") }

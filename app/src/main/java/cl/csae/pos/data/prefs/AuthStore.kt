@@ -167,11 +167,11 @@ class AuthStore(private val context: Context) {
 
     /**
      * F19: persiste el dispositivo POS seleccionado. Llamado desde
-     * [cl.csae.pos.data.selection.DispositivoPosActual.SetAsync] cuando el
-     * operador elige un dispositivo (vía UI) o cuando se reconcilia con la
+     * [cl.csae.pos.data.selection.DispositivoPosActual.setDispositivo] cuando
+     * el operador elige un dispositivo (vía UI) o cuando se reconcilia con la
      * lista del casino al login.
      *
-     * Si los parametros son null, se borran los 4 campos (clearDispositivo).
+     * Si los parametros son null, se borran los 4 campos.
      */
     suspend fun setDispositivo(
         id: String?,
@@ -192,19 +192,6 @@ class AuthStore(private val context: Context) {
                 if (tipo != null) prefs[KEY_DISPOSITIVO_TIPO] = tipo
             }
         }
-    }
-
-    /**
-     * F19: limpia la seleccion de dispositivo. Usado en logout (no es parte
-     * de clear() porque la seleccion puede sobrevivir entre sesiones — un
-     * operador puede cerrar y reabrir la app sin perder su eleccion de
-     * dispositivo, igual que el casino y la impresora bluetooth).
-     *
-     * PERO en logout del casino SI se limpia (porque el dispositivo esta
-     * asociado al casino).
-     */
-    suspend fun clearDispositivo() {
-        setDispositivo(null, null, null, null)
     }
 
     suspend fun clear() {

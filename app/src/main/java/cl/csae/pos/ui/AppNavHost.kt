@@ -195,7 +195,6 @@ fun CsaeNavHost() {
             composable(Routes.TOTEM) {
                 TotemScreen(
                     onSettings = { nav.navigate(Routes.CONFIGURACION) },
-                    onCambiarModo = cambiarModo,
                 )
             }
 
