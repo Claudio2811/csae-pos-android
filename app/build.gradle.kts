@@ -51,6 +51,18 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+        // F7+ (2026-08-12): forzar jniLibs no comprimidas (16 KB page-aligned
+        // compatible). AGP 8.5+ ya pone useLegacyPackaging=false por default
+        // para apps targetSdk >= 23, pero lo seteamos explicito para que:
+        // 1. Sea claro en el build file que esto es intencional.
+        // 2. Proteja contra cambios futuros del default.
+        // 3. La verificacion `unzip -l app.apk | grep .so | grep -v Storbed`
+        //    da vacio (todas las .so quedan STORED, no DEFLATED), que es lo
+        //    que Google Play exige a partir de Feb 1 2027 para dispositivos
+        //    con 16 KB page size.
+        jniLibs {
+            useLegacyPackaging = false
+        }
     }
     lint {
         // Sprint 3.2: CameraX 1.3.x marca `imageProxy.image` como opt-in

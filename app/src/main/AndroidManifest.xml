@@ -38,6 +38,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.CsaePos"
         android:usesCleartextTraffic="false"
+        android:extractNativeLibs="false"
         tools:targetApi="33">
         <activity
             android:name=".MainActivity"
