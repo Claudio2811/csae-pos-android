@@ -1,7 +1,6 @@
 package cl.csae.pos.ui.screens
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Search
@@ -10,8 +9,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cl.csae.pos.di.ServiceLocator
@@ -19,16 +16,11 @@ import cl.csae.pos.model.Comensal
 import cl.csae.pos.model.Servicio
 import cl.csae.pos.model.Ticket
 import cl.csae.pos.ui.components.MinimalTopBar
+import cl.csae.pos.ui.components.NumericKeypad
 import cl.csae.pos.ui.components.normalizeRutInput
-import cl.csae.pos.ui.components.AppTextField
+import cl.csae.pos.ui.components.RutInputField
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-
-// Sprint F13 (2026-08-11): maxLength del input RUT.
-// Backend espera hasta 9 chars canonicos (8 digitos + DV) y 12 con formato
-// "12.345.678-K". El normalizeRutInput ya trunca a 9, pero el supportingText
-// del field muestra el conteo en vivo para feedback.
-private const val RUT_MAX_LENGTH = 12  // "12.345.678-K" es el formateado mas largo
 
 /**
  * Pantalla del modo TOTEM (sprint 3.2 + 3.3 + F8).
@@ -139,6 +131,33 @@ fun TotemScreen(
 
     Scaffold(
         topBar = { MinimalTopBar(onSettings = onSettings) },
+        // Fix teclado duplicado (2026-08-12): agregamos el NumericKeypad
+        // al bottomBar para que el totem tenga un input consistente con
+        // la caja (POS). Antes el operador tenia que usar el teclado
+        // nativo qwerty del telefono, que ademas no mostraba la K del
+        // DV en todos los dispositivos. Ahora el RutInputField es
+        // readOnly y el unico input es el keypad de abajo.
+        bottomBar = {
+            if (estado == EstadoTotem.RutInput || estado == EstadoTotem.Buscando) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 8.dp,
+                    shadowElevation = 12.dp,
+                ) {
+                    Box(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
+                        NumericKeypad(
+                            onKeyPress = { ch ->
+                                rut = normalizeRutInput(rut + ch)
+                            },
+                            onBackspace = {
+                                if (rut.isNotEmpty()) rut = rut.dropLast(1)
+                            },
+                            enabled = estado != EstadoTotem.Buscando,
+                        )
+                    }
+                }
+            }
+        },
     ) { padding ->
         Box(
             modifier = Modifier
@@ -200,25 +219,24 @@ private fun RutInputStep(
 
         Spacer(Modifier.height(24.dp))
 
-        // Sprint F13 (2026-08-11): AppTextField con maxLength 12 (formato
-        // "12.345.678-K"). KeyboardType.Text + KeyboardCapitalization.Characters
-        // para que aparezca la K del DV. El auto-formato via normalizeRutInput
-        // se encarga de poner puntos y guion antes del DV.
-        AppTextField(
+        // Fix RUT totem (2026-08-12): antes usabamos AppTextField con
+        // normalizeRutInput que limpia el input a la forma canonica
+        // (sin puntos/guion) y no aplicaba el VisualTransformation. Por eso
+        // el operador veia "11111111" en vez de "11.111.111-1" mientras
+        // tipeaba. Ahora usamos RutInputField que ya tiene el
+        // VisualTransformation con formatRutForDisplay.
+        // Ademas: readOnly=true porque el input viene del NumericKeypad
+        // del bottomBar (no del teclado nativo, que ya no aparece).
+        RutInputField(
             value = rut,
             onValueChange = { onRutChange(normalizeRutInput(it)) },
             label = "RUT",
             placeholder = "12.345.678-9 o 12.345.678-K",
-            maxLength = RUT_MAX_LENGTH,
             enabled = !loading,
             isError = error != null,
-            errorMessage = null,  // El error general se muestra debajo del field
+            autoFormat = true,
+            readOnly = true,
             modifier = Modifier.fillMaxWidth(),
-            keyboardOptions = KeyboardOptions(
-                keyboardType = KeyboardType.Text,
-                capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.Characters,
-                imeAction = ImeAction.Search,
-            ),
         )
 
         error?.let { msg ->
@@ -258,6 +276,13 @@ private fun RutInputStep(
 /**
  * Pantalla 2 — wireframe 5. Lista de servicios como botones outlined
  * grandes. Seleccionar dispara la generacion del ticket.
+ *
+ * **F18.2 fix visual (2026-08-12):** los servicios ya consumidos hoy por
+ * este comensal aparecen con alpha reducida + texto "Ya consumido" debajo,
+ * y el boton se deshabilita. Mismo patron que `POSScreen.ServicioCard`.
+ * El backend igual valida con 409 la regla unicoPorDia, esto es solo
+ * feedback visual para que el operador no intente generar 2 tickets del
+ * mismo servicio.
  */
 @Composable
 private fun SeleccionServicioStep(
@@ -282,14 +307,37 @@ private fun SeleccionServicioStep(
         Spacer(Modifier.height(24.dp))
 
         servicios.forEach { s ->
+            val consumido = s.yaConsumido
             OutlinedButton(
-                onClick = { onSelect(s) },
+                onClick = { if (!consumido) onSelect(s) },
+                enabled = !consumido,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(96.dp),
+                    .height(if (consumido) 112.dp else 96.dp),
                 shape = MaterialTheme.shapes.medium,
             ) {
-                Text(s.nombre, fontSize = 26.sp, fontWeight = FontWeight.Medium)
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    Text(
+                        s.nombre,
+                        fontSize = 26.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = if (consumido)
+                            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                        else MaterialTheme.colorScheme.onSurface,
+                    )
+                    if (consumido) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Ya consumido",
+                            fontSize = 14.sp,
+                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                        )
+                    }
+                }
             }
         }
 

@@ -67,21 +67,31 @@ fun RutInputField(
     enabled: Boolean = true,
     isError: Boolean = false,
     useCustomKeypad: Boolean = false,
+    /**
+     * Si true, el field se muestra pero NO se puede editar con teclado.
+     * Usado cuando el input viene de un NumericKeypad externo (no nativo,
+     * no embebido) — asi no aparece el teclado del sistema al tap.
+     * Default false. Se combina con useCustomKeypad (el keypad embebido
+     * tambien requiere readOnly).
+     */
+    readOnly: Boolean = false,
 ) {
     val visualTransformation = remember(autoFormat) {
         if (autoFormat) RutVisualTransformation() else VisualTransformation.None
     }
     val rutValido = remember(value) { isRutFormatValid(value) }
+    val isReadOnly = readOnly || useCustomKeypad
 
     Column(modifier = modifier) {
         OutlinedTextField(
             value = value,
             onValueChange = { raw: String ->
+                if (isReadOnly) return@OutlinedTextField
                 onValueChange(normalizeRutInput(raw, autoFormat))
             },
             modifier = Modifier.fillMaxWidth(),
             enabled = enabled,
-            readOnly = useCustomKeypad,
+            readOnly = isReadOnly,
             textStyle = TextStyle(
                 fontSize = 22.sp,
                 fontFamily = FontFamily.Monospace,
@@ -244,19 +254,45 @@ private class RutVisualTransformation : VisualTransformation {
 
 /**
  * Mascara chilena: cada 3 digitos desde la derecha va un punto, y antes
- * del DV un guion. Si el ultimo char es K, va al final sin guion.
+ * del DV un guion. El DV puede ser K (siempre separado) o un digito
+ * (separado solo cuando ya estan los 8 digitos del cuerpo completos).
+ *
  *   "" -> ""
  *   "1" -> "1"
+ *   "12" -> "12"
  *   "1234" -> "1.234"
- *   "12345678" -> "12.345.678"
- *   "123456789" -> "12.345.678-9"
- *   "12345678K" -> "12.345.678-K"
+ *   "12345678" -> "12.345.678"   (8 digitos del cuerpo, sin DV todavia)
+ *   "123456789" -> "12.345.678-9" (9 chars: el 9 es el DV)
+ *   "12345678K" -> "12.345.678-K" (K es DV, separado por guion)
+ *
+ * Fix (2026-08-12): antes la funcion solo ponia guion cuando el ultimo
+ * char era K. Con 9+ digitos, el DV (ultimo digito) NO se separaba, lo
+ * que daba "176.204.559" en vez de "176.204.55-9". El usuario tenia
+ * que borrar y re-tipear el DV para que se formateara bien. Ahora el
+ * DV se separa automaticamente cuando:
+ *   - el ultimo char es K (cuerpo puede ser de cualquier largo), o
+ *   - el largo total es >= 9 (cuerpo completo = 8 digitos + 1 DV).
  */
 internal fun formatRutForDisplay(clean: String): String {
     if (clean.isEmpty()) return ""
-    val endsInK = clean.last() == 'K'
-    val body = if (endsInK) clean.dropLast(1) else clean
-    if (body.isEmpty()) return if (endsInK) "K" else ""
+    val isLastCharDV = clean.last() == 'K' || clean.length >= 9
+    if (!isLastCharDV) {
+        // Aun no llega al DV: solo puntos, sin guion.
+        val withDots = StringBuilder()
+        var count = 0
+        for (i in clean.indices.reversed()) {
+            withDots.insert(0, clean[i])
+            count++
+            if (count == 3 && i != 0) {
+                withDots.insert(0, '.')
+                count = 0
+            }
+        }
+        return withDots.toString()
+    }
+    // El ultimo char es DV (K o >=9 chars total): separarlo con guion.
+    val body = clean.dropLast(1)
+    val dv = clean.last().toString()
     val withDots = StringBuilder()
     var count = 0
     for (i in body.indices.reversed()) {
@@ -267,5 +303,5 @@ internal fun formatRutForDisplay(clean: String): String {
             count = 0
         }
     }
-    return if (endsInK) "$withDots-K" else withDots.toString()
+    return "$withDots-$dv"
 }

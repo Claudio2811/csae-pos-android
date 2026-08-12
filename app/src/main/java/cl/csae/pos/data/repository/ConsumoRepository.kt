@@ -196,11 +196,19 @@ class ConsumoRepository(
 
     private fun parseError(errorBody: String?, code: Int): String {
         if (errorBody.isNullOrBlank()) return "Error $code"
+        // 1) Intentar parsear como ApiError (ProblemDetails de ASP.NET Core).
         return try {
             val err = json.decodeFromString(ApiError.serializer(), errorBody)
-            err.detail ?: err.title ?: "Error $code"
+            val detail = err.detail ?: err.title
+            if (!detail.isNullOrBlank()) return detail
+            // 2) Fallback: extraer detail con Regex por si el JSON tiene
+            // propiedades extras que rompen el deserializer.
+            val match = Regex("\"detail\"\\s*:\\s*\"([^\"]+)\"").find(errorBody)
+            match?.groupValues?.getOrNull(1) ?: "Error $code"
         } catch (e: Exception) {
-            "Error $code"
+            // 3) Fallback final: Regex sobre el body crudo.
+            val match = Regex("\"detail\"\\s*:\\s*\"([^\"]+)\"").find(errorBody)
+            match?.groupValues?.getOrNull(1) ?: "Error $code"
         }
     }
 }

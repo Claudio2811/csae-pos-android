@@ -24,6 +24,7 @@ import cl.csae.pos.BuildConfig
 import cl.csae.pos.data.api.DispositivoPosDto
 import cl.csae.pos.di.ServiceLocator
 import cl.csae.pos.ui.components.CambiarModoTopBar
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 
 /**
@@ -74,22 +75,49 @@ fun ConfiguracionScreen(
 
     // F19: cada vez que se abre el dialog, recarga la lista de dispositivos
     // del casino actual. Asi si el admin agrego uno nuevo, el operador lo ve.
-    LaunchedEffect(showDispositivoDialog) {
-        if (showDispositivoDialog) {
-            loadingDispositivos = true
+    // F20 (2026-08-12): ademas del flag, agregamos un `retryTrigger` para
+    // poder reintentar manualmente desde un boton en el dialog.
+    var retryTrigger by remember { mutableStateOf(0) }
+    fun cargarDispositivos() {
+        loadingDispositivos = true
+        dispositivos = emptyList()
+        scope.launch {
             try {
-                val resp = ServiceLocator.posApiService.listarDispositivos()
+                // Incluimos inactivos para que el operador vea el universo
+                // completo de dispositivos del casino y pueda pedirle al
+                // admin que reactive uno si es necesario. El backend
+                // filtra por restaurante del JWT.
+                val restauranteId = ServiceLocator.authStore.restauranteId.firstOrNull()
+                android.util.Log.d("CsaeConfig", "GET /api/v1/dispositivos-pos?incluirInactivos=true (restauranteId del JWT=$restauranteId)")
+                val resp = ServiceLocator.posApiService.listarDispositivos(incluirInactivos = true)
+                android.util.Log.d("CsaeConfig", "  -> HTTP ${resp.code()}, body size=${resp.body()?.size ?: "null"}")
                 if (resp.isSuccessful) {
-                    dispositivos = resp.body().orEmpty().filter { it.activo }
+                    val raw = resp.body().orEmpty()
+                    android.util.Log.d("CsaeConfig", "  total raw=${raw.size}, activos=${raw.count { it.activo }}")
+                    if (raw.isEmpty()) {
+                        android.util.Log.w("CsaeConfig", "  Lista vacia del backend. Posibles causas: (a) el restaurante del JWT ($restauranteId) no tiene dispositivos registrados, (b) el admin del casino no ha creado dispositivos, (c) el JWT apunta a otro restaurante. Verificar con: GET /api/v1/dispositivos-pos con el token del admin web para ver TODOS los dispositivos.")
+                    } else {
+                        // Log de los primeros 3 para que se vea en logcat que hay datos.
+                        raw.take(3).forEach { d ->
+                            android.util.Log.d("CsaeConfig", "  - ${d.nombre} (${d.tipoNombre}, restauranteId=${d.restauranteId}, activo=${d.activo})")
+                        }
+                    }
+                    dispositivos = raw.filter { it.activo }
                 } else {
-                    snackbar.showSnackbar("Error al cargar dispositivos: ${resp.code()}")
+                    val err = resp.errorBody()?.string() ?: "sin body"
+                    android.util.Log.e("CsaeConfig", "Error HTTP ${resp.code()}: $err")
+                    snackbar.showSnackbar("Error al cargar dispositivos (HTTP ${resp.code()}): $err")
                 }
             } catch (t: Throwable) {
+                android.util.Log.e("CsaeConfig", "Error de red", t)
                 snackbar.showSnackbar("Error de red: ${t.message ?: "desconocido"}")
             } finally {
                 loadingDispositivos = false
             }
         }
+    }
+    LaunchedEffect(showDispositivoDialog, retryTrigger) {
+        if (showDispositivoDialog) cargarDispositivos()
     }
 
     // Re-leer nombre del dispositivo guardado si la MAC cambio.
@@ -355,15 +383,32 @@ fun ConfiguracionScreen(
     // F19: dialog de seleccion de dispositivo POS. Muestra la lista que se
     // cargo via listarDispositivos() al abrir el dialog. Cada item es un
     // boton con nombre + androidId corto + tipo. Click selecciona y cierra.
+    // F20 (2026-08-12): boton "Reintentar" si la carga falla o la lista
+    // esta vacia. Loggea con `adb logcat -s CsaeConfig` para debug.
     if (showDispositivoDialog) {
         AlertDialog(
             onDismissRequest = { showDispositivoDialog = false },
             title = { Text("Seleccionar dispositivo POS") },
             text = {
                 if (loadingDispositivos) {
-                    Text("Cargando...")
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(12.dp))
+                        Text("Cargando dispositivos del casino...")
+                    }
                 } else if (dispositivos.isEmpty()) {
-                    Text("No hay dispositivos activos en este casino. Consulta al admin para que registre uno.")
+                    Column {
+                        Text(
+                            "No se encontraron dispositivos activos en este casino.",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Si pensas que deberia haber dispositivos, revisa la conexion o consulta al admin del casino para que los registre en el backoffice.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                        )
+                    }
                 } else {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         dispositivos.forEach { d ->
@@ -394,6 +439,11 @@ fun ConfiguracionScreen(
             confirmButton = {
                 TextButton(onClick = { showDispositivoDialog = false }) {
                     Text("Cerrar")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { retryTrigger++ }, enabled = !loadingDispositivos) {
+                    Text("Reintentar")
                 }
             },
         )

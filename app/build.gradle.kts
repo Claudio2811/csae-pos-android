@@ -15,8 +15,20 @@ android {
         applicationId = "cl.csae.pos"
         minSdk = 26
         targetSdk = 36
-        versionCode = 12
-        versionName = "0.7.4-sprint34-fechas"
+        // F20+ (2026-08-12): bump de version para reflejar la ronda post-video
+        // de fixes del 2026-08-12:
+        // - F20 visual: TOTEM marca servicios ya consumidos (mismo patron que POS)
+        // - F20 logout race: logoutAndReset() en applicationScope (no se cancela
+        //   al destruirse el NavHost por popUpTo(0))
+        // - F20 currentUser reactivo: era var local, ahora Flow de DataStore
+        //   (evita "Tu cuenta no tiene permisos" fantasma)
+        // - F20 modo preferido reactivo: LaunchedEffect(isLoggedIn, modoPreferido)
+        //   re-navega al cambiar el modo en Configuracion
+        // - F20 ConsumosScreen: startOfDayLocal->UTC y carga inicial independiente
+        //   del dispositivo
+        // - F20 device selector logging: incluye restauranteId del JWT en CsaeConfig log
+        versionCode = 14
+        versionName = "0.8.0-f20-postvideo"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
         // URL del API configurable por buildType.

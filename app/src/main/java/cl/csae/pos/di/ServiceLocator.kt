@@ -12,6 +12,10 @@ import cl.csae.pos.data.repository.CatalogRepository
 import cl.csae.pos.data.repository.ConsumoRepository
 import cl.csae.pos.data.repository.TicketCacheRepository
 import cl.csae.pos.data.repository.TicketValidarRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * ServiceLocator: punto unico de acceso a las dependencias de la app.
@@ -26,6 +30,23 @@ import cl.csae.pos.data.repository.TicketValidarRepository
 object ServiceLocator {
 
     private lateinit var appContext: Context
+
+    /**
+     * Scope de coroutines a nivel aplicacion. NO esta atado al ciclo de vida
+     * de la UI, asi que sobrevive a navegaciones que destruyen composables
+     * (ej: `popUpTo(0) { inclusive = true }` en logout). Usar para
+     * operaciones que deben completarse aunque la UI se destruya.
+     *
+     * **Por que se necesita (fix 2026-08-12):** antes el logout se hacia en
+     * un `rememberCoroutineScope()` dentro de `CsaeNavHost`. Cuando el
+     * NavHost se destruia por el `popUpTo(0)`, el scope se cancelaba y
+     * `authRepo.logout()` quedaba a medias, lo que podia dejar la app en
+     * estado inconsistente (DataStore con token pero UI en login) o crashear
+     * al navegar.
+     */
+    val applicationScope: CoroutineScope by lazy {
+        CoroutineScope(Dispatchers.IO + SupervisorJob())
+    }
 
     val authStore: AuthStore by lazy { AuthStore(appContext) }
 
@@ -63,5 +84,20 @@ object ServiceLocator {
     fun resetSession() {
         catalogRepo.clear()
         ticketCache.clear()
+    }
+
+    /**
+     * Logout + reset atomico en el [applicationScope] (sobrevive a la
+     * destruccion del NavHost por `popUpTo(0)`). Reemplaza el patron anterior
+     * `scope.launch { logout(); resetSession() }` que se cancelaba al
+     * destruirse el composable del NavHost.
+     */
+    fun logoutAndReset() {
+        applicationScope.launch {
+            try {
+                authRepo.logout()
+            } catch (_: Throwable) { /* swallow: logout es best-effort */ }
+            resetSession()
+        }
     }
 }

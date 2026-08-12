@@ -197,6 +197,11 @@ fun POSScreen(
                 enabled = !loading,
                 isError = error != null,
                 useCustomKeypad = false,
+                // Fix teclado duplicado (2026-08-12): el NumericKeypad del
+                // bottomBar es la unica via de input. Antes el field era
+                // editable, entonces al tap aparecia tambien el teclado
+                // nativo del telefono, pisando al custom.
+                readOnly = true,
                 modifier = Modifier.fillMaxWidth().focusRequester(focusRut),
             )
             Button(
