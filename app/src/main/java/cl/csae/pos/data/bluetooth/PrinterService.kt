@@ -82,25 +82,57 @@ class PrinterService(private val context: Context) {
      * (`<service android:name="net.posprinter.service.PosprinterService"/>`)
      * asi que solo necesitamos hacer el bind. Una vez bindeado, `binder`
      * queda con la instancia del AIDL.
+     *
+     * **Pitfall F4.1 (resuelto):** al armar el `Intent` NO usar
+     * `ComponentName("net.posprinter.service", ...)` con el package del
+     * class, porque Android busca el Service en el APK que tenga ese
+     * `applicationId` (y el nuestro es `cl.csae.pos`, no
+     * `net.posprinter.service`). El Service, aunque la class esta en
+     * el package `net.posprinter.service`, pertenece al APK actual
+     * (applicationId = cl.csae.pos) porque esta en `app/libs/` y se
+     * compila dentro de classes.dex.
+     *
+     * **Pitfall F4.2 (resuelto):** tampoco usar
+     * `Class.forName("net.posprinter.service.PosprinterService")` +
+     * `Intent(context, serviceClass)`. Esto funciona en la mayoria de
+     * devices pero algunos (Xiaomi, Samsung con One UI 6+) tienen
+     * optimizaciones que hacen que el cast del Class<*> al
+     * `Class<*>` del Intent falle en runtime, dejando el Intent sin
+     * component y `bindService` retornando false. El bug se manifiesta
+     * como "No se pudo hacer bind del PosprinterService" o como
+     * "Impresora no conectada" si el `onServiceConnected` se completa
+     * con un IBinder null.
+     *
+     * **Fix definitivo:** usar `Intent().setClassName(ctx, FQN)`. Es
+     * la forma que el demo oficial del vendor usa (con
+     * `setClassName(this, "net.posprinter.service.PosprinterService")`)
+     * y NO depende de la carga de la class en el classpath antes del
+     * bind, porque Android resuelve el component por FQN en runtime
+     * via PackageManager.
      */
     private suspend fun ensureBound(): IMyBinder {
         binder?.let { return it }
         return suspendCancellableCoroutine { cont ->
+            // F4.2: usar setClassName con FQN (no ComponentName, no Class.forName).
             val intent = Intent().apply {
-                setComponent(ComponentName(
-                    "net.posprinter.service",
+                setClassName(
+                    context,
                     "net.posprinter.service.PosprinterService",
-                ))
+                )
             }
+            Log.d(TAG, "bindService con setClassName FQN=net.posprinter.service.PosprinterService")
             val conn = object : ServiceConnection {
                 override fun onServiceConnected(component: ComponentName?, ib: IBinder?) {
+                    Log.d(TAG, "onServiceConnected component=$component binderClass=${ib?.javaClass?.name}")
                     val b = ib as? IMyBinder
                     if (b != null) {
                         binder = b
                         bindingReady.set(true)
                         cont.resume(b)
                     } else {
-                        cont.resumeWithException(IllegalStateException("Binder no es IMyBinder."))
+                        cont.resumeWithException(IllegalStateException(
+                            "Binder no es IMyBinder. Tipo real: ${ib?.javaClass?.name}"
+                        ))
                     }
                 }
                 override fun onServiceDisconnected(component: ComponentName?) {
@@ -112,12 +144,22 @@ class PrinterService(private val context: Context) {
             val bound = try {
                 context.bindService(intent, conn, Context.BIND_AUTO_CREATE)
             } catch (e: SecurityException) {
+                Log.e(TAG, "bindService SecurityException: ${e.message}")
+                cont.resumeWithException(e)
+                return@suspendCancellableCoroutine
+            } catch (e: Exception) {
+                Log.e(TAG, "bindService Exception: ${e.message}", e)
                 cont.resumeWithException(e)
                 return@suspendCancellableCoroutine
             }
+            Log.d(TAG, "bindService retorno=$bound (true=ok, false=no encontrado)")
             if (!bound) {
                 cont.resumeWithException(IllegalStateException(
-                    "No se pudo hacer bind del PosprinterService. Revisa el manifest."
+                    "No se pudo hacer bind del PosprinterService (returned false). " +
+                        "Posibles causas: (a) el service no esta declarado en el manifest, " +
+                        "(b) el manifest dice 'exported=false' y otro proceso intenta acceder, " +
+                        "(c) el SDK vendor no se cargo correctamente, " +
+                        "(d) el package del FQN no coincide con el applicationId."
                 ))
                 return@suspendCancellableCoroutine
             }
@@ -150,13 +192,17 @@ class PrinterService(private val context: Context) {
             return@withContext Result.failure(IllegalStateException("Ya hay una conexion en curso."))
         }
         try {
+            Log.d(TAG, "connectBtPort: mac=$macAddress, ensureBound()...")
             val b = ensureBound()
+            Log.d(TAG, "connectBtPort: binder listo, llamando connectBtPort del SDK...")
             val connected = suspendCancellableCoroutine<Unit> { cont ->
                 b.connectBtPort(macAddress, object : UiExecute {
                     override fun onsucess() {
+                        Log.d(TAG, "connectBtPort: SDK retorno onsucess")
                         cont.resume(Unit)
                     }
                     override fun onfailed() {
+                        Log.e(TAG, "connectBtPort: SDK retorno onfailed")
                         cont.resumeWithException(IllegalStateException(
                             "No se pudo conectar a $macAddress. Verifica que este emparejada y encendida."
                         ))
@@ -223,11 +269,31 @@ class PrinterService(private val context: Context) {
     /**
      * Imprime un ticket de prueba: "CSAE POS - PRUEBA / Si lees esto, la
      * impresora esta OK." Usado desde Configuracion.
+     *
+     * F4.2: si el `binder` es null (porque el Service se desconecto
+     * entre el `connectBtPort` y esta llamada), intenta auto-rebind
+     * antes de retornar "Impresora no conectada". Esto cubre el caso
+     * edge donde el sistema mata el Service por presion de memoria
+     * justo despues de conectar.
      */
     suspend fun imprimirPrueba(): Result<Unit> = withContext(Dispatchers.IO) {
-        val b = binder ?: return@withContext Result.failure(
-            IllegalStateException("Impresora no conectada.")
-        )
+        var b = binder
+        if (b == null) {
+            Log.w(TAG, "imprimirPrueba: binder null, intentando ensureBound() de nuevo...")
+            val rebind = runCatching { ensureBound() }
+            if (rebind.isFailure) {
+                return@withContext Result.failure(
+                    IllegalStateException(
+                        "Impresora no conectada. ensureBound() fallo: ${rebind.exceptionOrNull()?.message}",
+                        rebind.exceptionOrNull(),
+                    )
+                )
+            }
+            b = rebind.getOrNull()
+        }
+        if (b == null) {
+            return@withContext Result.failure(IllegalStateException("Impresora no conectada (binder null despues de rebind)."))
+        }
         try {
             suspendCancellableCoroutine<Unit> { cont ->
                 b.writeDataByYouself(object : UiExecute {

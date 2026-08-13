@@ -180,7 +180,7 @@ fun ConfiguracionScreen(
             return
         }
         printing = true
-        printStatus = "Conectando..."
+        printStatus = "Conectando a ${nombreImpresora ?: mac}..."
         scope.launch {
             // F4: con el SDK vendor hay que conectar ANTES de imprimir (antes
             // el PrinterService abria el socket por cada operacion). Conectar
@@ -188,14 +188,20 @@ fun ConfiguracionScreen(
             val conn = ServiceLocator.printerService.connectBtPort(mac)
             if (conn.isFailure) {
                 printing = false
-                printStatus = "Error conectando: ${conn.exceptionOrNull()?.message}"
+                val err = conn.exceptionOrNull()?.message ?: "desconocido"
+                android.util.Log.e("CsaeConfig", "connectBtPort fallo: $err", conn.exceptionOrNull())
+                printStatus = "Error conectando: $err. Revisa permisos Bluetooth y que la impresora este encendida."
                 return@launch
             }
             printStatus = "Imprimiendo prueba..."
             val r = ServiceLocator.printerService.imprimirPrueba()
             printing = false
             r.onSuccess { printStatus = "OK: prueba enviada a ${nombreImpresora ?: mac}." }
-             .onFailure { printStatus = "Error: ${it.message}" }
+             .onFailure {
+                 val err = it.message ?: "desconocido"
+                 android.util.Log.e("CsaeConfig", "imprimirPrueba fallo: $err", it)
+                 printStatus = "Error: $err"
+             }
         }
     }
 

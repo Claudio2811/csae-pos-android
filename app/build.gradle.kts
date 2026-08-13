@@ -15,21 +15,23 @@ android {
         applicationId = "cl.csae.pos"
         minSdk = 26
         targetSdk = 36
-        // F4 (2026-08-13): bump de version para reflejar el SDK de la
-        // impresora POS PPT305BT integrado.
-        // - PrinterService reescrito para usar el SDK real (JAR vendor
-        //   net.posprinter.posprinterface.IMyBinder via AIDL Service).
-        // - Build: posprinterconnectandsendsdk.jar agregado a app/libs/
-        //   (ignorado en git, ver .gitignore).
-        // - AndroidManifest: nuevo <service> net.posprinter.service
-        //   .PosprinterService + permisos BLUETOOTH/BLUETOOTH_CONNECT/
-        //   BLUETOOTH_SCAN/USB para SDK 31+ (Android 12+).
-        // - ConfiguracionScreen: nueva seccion "Impresora Bluetooth" que
-        //   usa el SDK real para conectar e imprimir (antes era stub).
-        // - TicketScreen: el boton "Imprimir" ahora usa el SDK para
-        //   mandar el contenido del ticket al printerService real.
-        versionCode = 16
-        versionName = "0.9.1-f4-printer-sdk"
+        // F4.2 (2026-08-13): bump de version para reflejar el fix del
+        // bind del Service de la impresora POS PPT305BT.
+        // - PrinterService.ensureBound(): cambio de
+        //   `ComponentName("net.posprinter.service", FQN)` (F4.1, BUG:
+        //   apuntaba al package del class, no al applicationId) a
+        //   `Intent().setClassName(ctx, FQN)`. Esto es lo que el demo
+        //   oficial del vendor hace y NO depende de la carga de la
+        //   class en el classpath antes del bind.
+        // - PrinterService.imprimirPrueba(): auto-rebind si el binder
+        //   queda null entre el connectBtPort y la impresion. Cubre
+        //   el caso donde el sistema mata el Service por presion de
+        //   memoria justo despues de conectar.
+        // - Logging mas detallado: TAG CsaePrinter en cada paso del
+        //   bind, connect, y print, para diagnosticar rapido con
+        //   `adb logcat -s CsaePrinter CsaeConfig`.
+        versionCode = 17
+        versionName = "0.9.2-f4-printer-fix"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
         // URL del API configurable por buildType.
