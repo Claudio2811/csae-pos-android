@@ -15,23 +15,23 @@ android {
         applicationId = "cl.csae.pos"
         minSdk = 26
         targetSdk = 36
-        // F4.2 (2026-08-13): bump de version para reflejar el fix del
-        // bind del Service de la impresora POS PPT305BT.
-        // - PrinterService.ensureBound(): cambio de
-        //   `ComponentName("net.posprinter.service", FQN)` (F4.1, BUG:
-        //   apuntaba al package del class, no al applicationId) a
-        //   `Intent().setClassName(ctx, FQN)`. Esto es lo que el demo
-        //   oficial del vendor hace y NO depende de la carga de la
-        //   class en el classpath antes del bind.
-        // - PrinterService.imprimirPrueba(): auto-rebind si el binder
-        //   queda null entre el connectBtPort y la impresion. Cubre
-        //   el caso donde el sistema mata el Service por presion de
-        //   memoria justo despues de conectar.
-        // - Logging mas detallado: TAG CsaePrinter en cada paso del
-        //   bind, connect, y print, para diagnosticar rapido con
-        //   `adb logcat -s CsaePrinter CsaeConfig`.
-        versionCode = 19
-        versionName = "0.9.4-f4-printer-config-ui"
+        // F4.4 (2026-08-13): reversion al patron BluetoothSocket + UUID SPP
+        // (commit da09788) que SI funciona con la PPT305BT del casino Demo
+        // (mismo device, misma MAC). El SDK vendor (posprinterconnectandsendsdk
+        // .jar) usado en F4 / F4.2 / F4.3 fallaba con `connectBtPort`
+        // retornando `onfailed` en este device especifico. La causa mas
+        // probable: el SDK usa un UUID RFCOMM interno que NO matchea con
+        // el UUID SPP estandar (00001101-0000-1000-8000-00805F9B34FB)
+        // que usan las impresoras ESC/POS genericas.
+        // - PrinterService reescrito con BluetoothSocket + UUID SPP
+        //   estandar + comandos ESC/POS manuales (init, align, char size,
+        //   GS V corte, GS ( k QR code, GS v 0 raster bitmap).
+        // - Build: posprinterconnectandsendsdk.jar YA NO se incluye.
+        // - AndroidManifest: YA NO se declara el <service> de la impresora.
+        // - Comandos QR (GS ( k) y bitmap raster (GS v 0) implementados
+        //   a mano, equivalente a lo que hacia el SDK vendor.
+        versionCode = 20
+        versionName = "0.9.5-f4-printer-bt-spp"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
         // URL del API configurable por buildType.
@@ -150,13 +150,13 @@ dependencies {
     // Play 16 KB page size requirement, deadline Feb 1 2027).
     implementation("io.coil-kt:coil-compose:2.7.0")
 
-    // F4 (2026-08-13): SDK de la impresora POS PPT305BT (Bluetooth ESC/POS).
-    // JAR vendor bajado manualmente (ver .gitignore). El SDK expone un
-    // IMyBinder AIDL que se bindea desde un Service Android declarado en
-    // el manifest del proyecto. Ver PrinterService.kt para el patron
-    // de uso (connectBtPort/writeDataByYouself/disconnectCurrentPort).
-    // Antes: stub que solo loggeaba (no imprimia nada). Ahora: real.
-    implementation(files("libs/posprinterconnectandsendsdk.jar"))
+    // F4.4 (2026-08-13): SDK vendor de la impresora REMOVIDO. Volvimos
+    // al patron BluetoothSocket + UUID SPP estandar (ver PrinterService.kt)
+    // que SÍ funciona con la PPT305BT del casino Demo. El SDK vendor
+    // (posprinterconnectandsendsdk.jar) usaba un UUID RFCOMM interno que
+    // no matcheaba con la impresora, por eso connectBtPort retornaba
+    // onfailed. El JAR en app/libs/ ya no se compila (deja de estar en
+    // .gitignore tambien en este commit).
 
     // Tests
     testImplementation("junit:junit:4.13.2")
