@@ -99,7 +99,16 @@ fun TotemScreen(
         error = null
         estado = EstadoTotem.Buscando
         scope.launch {
-            // Si no hay catalog, intentar bajarlo.
+            // F21 (2026-08-13): en vez de usar el cache local (que puede
+            // estar desincronizado), consultamos el endpoint
+            // /servicios-disponibles que SIEMPRE devuelve el estado actual
+            // de la BD. Esto resuelve el bug "muestra servicios ya
+            // consumidos" que el user reporto.
+            //
+            // Si la red falla, el metodo cae al cache local automaticamente
+            // (con un warning en logcat). El backend igual valida la
+            // regla unicoPorDia con 409, asi que no es un bug, solo
+            // feedback visual perdido.
             if (ServiceLocator.catalogRepo.getCached() == null) {
                 val r = ServiceLocator.catalogRepo.refresh()
                 if (r.isFailure) {
@@ -108,7 +117,13 @@ fun TotemScreen(
                     return@launch
                 }
             }
-            val c = ServiceLocator.catalogRepo.buscarComensal(rut)
+            val r = ServiceLocator.catalogRepo.buscarComensalServiciosFrescos(rut)
+            if (r.isFailure) {
+                estado = EstadoTotem.RutInput
+                error = r.exceptionOrNull()?.message ?: "No se encontro comensal con RUT $rut."
+                return@launch
+            }
+            val c = r.getOrNull()
             when {
                 c == null -> {
                     estado = EstadoTotem.RutInput
@@ -118,7 +133,14 @@ fun TotemScreen(
                     estado = EstadoTotem.RutInput
                     error = "Este comensal no tiene servicios habilitados para hoy."
                 }
-                c.servicios.size == 1 -> {
+                // F21: si TODOS los servicios ya fueron consumidos hoy,
+                // mostrar el mensaje claro (no entrar al flujo de
+                // seleccion).
+                c.servicios.all { it.yaConsumido } -> {
+                    estado = EstadoTotem.RutInput
+                    error = "Este comensal ya consumio todos sus servicios hoy. Vuelve manana."
+                }
+                c.servicios.size == 1 && !c.servicios.first().yaConsumido -> {
                     comensal = c
                     serviciosVisibles = c.servicios
                     generarTicket(c, c.servicios.first())

@@ -16,6 +16,7 @@ import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.util.UUID
@@ -157,17 +158,36 @@ class PrinterService(private val context: Context) {
     /**
      * Envia un ticket al printer. Asume que ya esta conectado.
      * Si no esta conectado, retorna error.
+     *
+     * F4.5 (2026-08-13): concatena todos los ByteArrays en un unico buffer
+     * y hace UN write + flush + delay(150ms). El patron anterior
+     * (`for (bytes in ...) { out.write(bytes) }`) hacia N writes
+     * consecutivos, y en algunas impresoras el outputStream Bluetooth
+     * hace buffering interno por write — el resultado era que la
+     * impresora recibia los bytes incompletos o fuera de orden, y no
+     * imprimia. Un solo write grande + delay post-flush es la forma
+     * robusta.
      */
     suspend fun imprimirTicket(ticket: Ticket, qrToken: String?): Result<Unit> = withContext(Dispatchers.IO) {
         val s = socket ?: return@withContext Result.failure(
             IllegalStateException("Impresora no conectada. Llama a connectBtPort() primero.")
         )
+        if (!s.isConnected) {
+            return@withContext Result.failure(IllegalStateException("Socket Bluetooth no esta conectado."))
+        }
         try {
             val out = s.outputStream
-            for (bytes in buildTicketCommands(ticket, qrToken)) {
-                out.write(bytes)
-            }
+            val buffer = concatBytes(buildTicketCommands(ticket, qrToken))
+            Log.d(TAG, "imprimirTicket: ${buffer.size} bytes a enviar (ticket=${ticket.numero})")
+            out.write(buffer)
             out.flush()
+            // F4.5: delay post-flush. La PPT305BT (y la mayoria de las
+            // impresoras termicas) procesan el buffer en background.
+            // Si cerramos el socket inmediatamente, a veces se cortan
+            // los ultimos bytes. 150ms es suficiente y no perceptible
+            // para el operador.
+            delay(150)
+            Log.d(TAG, "imprimirTicket: OK (${buffer.size} bytes enviados)")
             Result.success(Unit)
         } catch (e: IOException) {
             Log.e(TAG, "imprimirTicket: IOException: ${e.message}", e)
@@ -188,12 +208,17 @@ class PrinterService(private val context: Context) {
         val s = socket ?: return@withContext Result.failure(
             IllegalStateException("Impresora no conectada.")
         )
+        if (!s.isConnected) {
+            return@withContext Result.failure(IllegalStateException("Socket Bluetooth no esta conectado."))
+        }
         try {
             val out = s.outputStream
-            for (bytes in buildPruebaCommands()) {
-                out.write(bytes)
-            }
+            val buffer = concatBytes(buildPruebaCommands())
+            Log.d(TAG, "imprimirPrueba: ${buffer.size} bytes a enviar")
+            out.write(buffer)
             out.flush()
+            delay(150)
+            Log.d(TAG, "imprimirPrueba: OK")
             Result.success(Unit)
         } catch (e: IOException) {
             Log.e(TAG, "imprimirPrueba: IOException: ${e.message}", e)
@@ -414,6 +439,22 @@ class PrinterService(private val context: Context) {
     }
 
     // ================================================================
+
+    /**
+     * Concatena una lista de ByteArrays en uno solo. Util para enviar
+     * todo el ticket / prueba en un unico `out.write()` y evitar el
+     * buffering por write que tienen algunos BluetoothSocket.
+     */
+    private fun concatBytes(chunks: List<ByteArray>): ByteArray {
+        val total = chunks.sumOf { it.size }
+        val out = ByteArray(total)
+        var offset = 0
+        for (chunk in chunks) {
+            System.arraycopy(chunk, 0, out, offset, chunk.size)
+            offset += chunk.size
+        }
+        return out
+    }
 
     private val bluetoothAdapter: BluetoothAdapter?
         get() {

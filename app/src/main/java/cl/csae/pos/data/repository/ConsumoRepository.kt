@@ -86,6 +86,20 @@ class ConsumoRepository(
                 // Ignorar: el consumo ya quedo registrado en el backend.
             }
 
+            // F21 (2026-08-13): despues de un consumo OK, refrescar el cache
+            // local con el endpoint /servicios-disponibles para que el flag
+            // `yaConsumido` este 100% sincronizado con la BD (no solo del
+            // map en memoria, sino de TODOS los servicios que el comensal
+            // tenga en su membresia). Si falla, no es critico: el backend ya
+            // registro el consumo y la siguiente busqueda se hara via el
+            // endpoint nuevo que consulta la BD.
+            val comensalParaRefrescar = catalog.buscarComensalPorMembresia(membresiaId)
+            if (comensalParaRefrescar != null) {
+                runCatching {
+                    catalog.buscarComensalServiciosFrescos(comensalParaRefrescar.rut)
+                }
+            }
+
             // Para el ticket local, necesitamos los datos del comensal. Los tenemos
             // en el cache del catalog. Si no esta, intentamos re-bajarlo una vez.
             var comensal = catalog.buscarComensalPorId(body.comensalId)

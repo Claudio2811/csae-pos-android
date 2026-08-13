@@ -58,6 +58,22 @@ interface PosApiService {
     @GET("api/v1/pos/comensales/buscar")
     suspend fun buscarComensal(@Query("rut") rut: String): Response<ComensalPosServiciosResponseDto>
 
+    /**
+     * F21 (2026-08-13): endpoint dedicado para refrescar el estado de los
+     * servicios disponibles del comensal. Se llama al seleccionarlo en
+     * POS/Totem y despues de cada ticket, para que el mobile SIEMPRE
+     * vea el estado actual de la BD (no un cache local desincronizado).
+     *
+     * @param rut RUT del comensal (con o sin formato).
+     * @param fecha fecha a consultar en formato ISO yyyy-MM-dd. Si es
+     *              null, el backend usa `DateTime.Today` del server.
+     */
+    @GET("api/v1/pos/comensales/{rut}/servicios-disponibles")
+    suspend fun serviciosDisponibles(
+        @Path("rut") rut: String,
+        @Query("fecha") fecha: String? = null,
+    ): Response<ComensalServiciosDisponiblesResponseDto>
+
     // ============= CONSUMOS =============
 
     @POST("api/v1/pos/consumos")

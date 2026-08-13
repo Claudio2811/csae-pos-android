@@ -87,14 +87,33 @@ fun POSScreen(
             }
             return
         }
-        val c = ServiceLocator.catalogRepo.buscarComensal(rut)
-        when {
-            c == null -> error = "No se encontro comensal con RUT $rut en este casino."
-            c.servicios.isEmpty() -> {
-                comensal = c
-                error = "El comensal no tiene servicios habilitados."
+        // F21 (2026-08-13): en vez de usar el cache local (que puede estar
+        // desincronizado), consultamos el endpoint /servicios-disponibles
+        // que SIEMPRE devuelve el estado actual de la BD. Esto resuelve
+        // el bug "muestra servicios ya consumidos" que el user reporto.
+        // Si la red falla, el metodo cae al cache local automaticamente.
+        scope.launch {
+            val r = ServiceLocator.catalogRepo.buscarComensalServiciosFrescos(rut)
+            r.onSuccess { c ->
+                when {
+                    c.servicios.isEmpty() -> {
+                        comensal = c
+                        error = "El comensal no tiene servicios habilitados."
+                    }
+                    // F21: si TODOS los servicios ya fueron consumidos hoy,
+                    // mostrar el mensaje claro y no permitir seleccionar.
+                    c.servicios.all { it.yaConsumido } -> {
+                        comensal = c
+                        error = "Este comensal ya consumio todos sus servicios hoy. Vuelve manana."
+                    }
+                    else -> {
+                        comensal = c
+                        error = null
+                    }
+                }
+            }.onFailure {
+                error = it.message ?: "No se encontro comensal con RUT $rut."
             }
-            else -> comensal = c
         }
     }
 

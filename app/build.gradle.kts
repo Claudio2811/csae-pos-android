@@ -15,23 +15,30 @@ android {
         applicationId = "cl.csae.pos"
         minSdk = 26
         targetSdk = 36
-        // F4.4 (2026-08-13): reversion al patron BluetoothSocket + UUID SPP
-        // (commit da09788) que SI funciona con la PPT305BT del casino Demo
-        // (mismo device, misma MAC). El SDK vendor (posprinterconnectandsendsdk
-        // .jar) usado en F4 / F4.2 / F4.3 fallaba con `connectBtPort`
-        // retornando `onfailed` en este device especifico. La causa mas
-        // probable: el SDK usa un UUID RFCOMM interno que NO matchea con
-        // el UUID SPP estandar (00001101-0000-1000-8000-00805F9B34FB)
-        // que usan las impresoras ESC/POS genericas.
-        // - PrinterService reescrito con BluetoothSocket + UUID SPP
-        //   estandar + comandos ESC/POS manuales (init, align, char size,
-        //   GS V corte, GS ( k QR code, GS v 0 raster bitmap).
-        // - Build: posprinterconnectandsendsdk.jar YA NO se incluye.
-        // - AndroidManifest: YA NO se declara el <service> de la impresora.
-        // - Comandos QR (GS ( k) y bitmap raster (GS v 0) implementados
-        //   a mano, equivalente a lo que hacia el SDK vendor.
-        versionCode = 20
-        versionName = "0.9.5-f4-printer-bt-spp"
+        // F4.5 (2026-08-13): concatenar todos los ByteArrays en un unico
+        // write + delay(150ms) post-flush. El patron anterior (N writes
+        // consecutivos) hacia buffering por write en algunos BluetoothSocket
+        // y la PPT305BT recibia los bytes incompletos o fuera de orden.
+        // Ademas: verificacion de `s.isConnected` antes de escribir.
+        //
+        // F21 (2026-08-13): nuevo endpoint backend
+        // `GET /api/v1/pos/comensales/{rut}/servicios-disponibles?fecha=...`
+        // que el mobile consulta al seleccionar un comensal y despues de
+        // cada ticket. SIEMPRE ve el estado actual de la BD, no el cache
+        // local. El user reporto que seguia viendo servicios ya consumidos.
+        // Cambios mobile:
+        // - PosDtos.kt: nuevo ComensalServiciosDisponiblesResponseDto,
+        //   ServicioDisponibleItemDto, ComensalNoEncontradoResponseDto.
+        // - PosApiService.kt: nuevo metodo `serviciosDisponibles(rut, fecha)`.
+        // - CatalogRepository.kt: nuevo metodo
+        //   `buscarComensalServiciosFrescos(rut, fecha)` que llama al
+        //   endpoint nuevo y sincroniza el cache local.
+        // - TotemScreen.kt y POSScreen.kt: usan el metodo nuevo en vez
+        //   de `buscarComensal` (que usaba cache local).
+        // - ConsumoRepository.kt: despues de un consumo OK, refresca el
+        //   cache del comensal via el endpoint nuevo.
+        versionCode = 21
+        versionName = "0.9.6-f4-printer-buf-fresh"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
         // URL del API configurable por buildType.
