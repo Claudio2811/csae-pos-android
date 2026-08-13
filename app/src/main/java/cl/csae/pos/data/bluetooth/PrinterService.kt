@@ -112,7 +112,19 @@ class PrinterService(private val context: Context) {
      */
     private suspend fun ensureBound(): IMyBinder {
         binder?.let { return it }
-        return suspendCancellableCoroutine { cont ->
+        // F4.3: timeout para no quedar colgado si el sistema mata la corrutina
+        // del Service sin llamar onServiceConnected (caso raro pero posible en
+        // devices Xiaomi/Samsung agresivos con la gestion de memoria).
+        return kotlinx.coroutines.withTimeoutOrNull(8_000L) {
+            doEnsureBound()
+        } ?: throw IllegalStateException(
+            "Timeout (8s) esperando el bind del PosprinterService. " +
+                "Revisa que el SDK vendor este bien cargado y que el manifest " +
+                "declare el service."
+        )
+    }
+
+    private suspend fun doEnsureBound(): IMyBinder = suspendCancellableCoroutine { cont ->
             // F4.2: usar setClassName con FQN (no ComponentName, no Class.forName).
             val intent = Intent().apply {
                 setClassName(
@@ -167,7 +179,6 @@ class PrinterService(private val context: Context) {
                 try { context.unbindService(conn) } catch (_: Exception) {}
             }
         }
-    }
 
     /**
      * Lista los dispositivos Bluetooth ya emparejados (no requiere el SDK
@@ -183,10 +194,27 @@ class PrinterService(private val context: Context) {
     /**
      * Conecta a la impresora Bluetooth via el SDK vendor.
      * Si ya esta conectado, retorna success sin re-conectar.
+     *
+     * F4.3: agregado chequeo de permisos Bluetooth ANTES de invocar el SDK.
+     * En Android 12+ (API 31+) `BLUETOOTH_CONNECT` es runtime permission.
+     * Si no esta otorgada, el SDK falla con error críptico. Mejor fallar
+     * rápido con un mensaje claro.
      */
     suspend fun connectBtPort(macAddress: String): Result<Unit> = withContext(Dispatchers.IO) {
         if (macAddress.isBlank()) {
             return@withContext Result.failure(IllegalArgumentException("MAC vacio."))
+        }
+        // F4.3: chequeo de permisos Bluetooth (API 31+ runtime permission).
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            val granted = context.checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+            if (!granted) {
+                Log.e(TAG, "connectBtPort: sin permiso BLUETOOTH_CONNECT (API 31+)")
+                return@withContext Result.failure(IllegalStateException(
+                    "Sin permiso BLUETOOTH_CONNECT. Otorgalo en Settings > Apps > " +
+                        "CSAE POS > Permisos > Dispositivos cercanos."
+                ))
+            }
         }
         if (!connecting.compareAndSet(false, true)) {
             return@withContext Result.failure(IllegalStateException("Ya hay una conexion en curso."))
@@ -195,26 +223,33 @@ class PrinterService(private val context: Context) {
             Log.d(TAG, "connectBtPort: mac=$macAddress, ensureBound()...")
             val b = ensureBound()
             Log.d(TAG, "connectBtPort: binder listo, llamando connectBtPort del SDK...")
-            val connected = suspendCancellableCoroutine<Unit> { cont ->
-                b.connectBtPort(macAddress, object : UiExecute {
-                    override fun onsucess() {
-                        Log.d(TAG, "connectBtPort: SDK retorno onsucess")
-                        cont.resume(Unit)
-                    }
-                    override fun onfailed() {
-                        Log.e(TAG, "connectBtPort: SDK retorno onfailed")
-                        cont.resumeWithException(IllegalStateException(
-                            "No se pudo conectar a $macAddress. Verifica que este emparejada y encendida."
-                        ))
-                    }
-                })
-            }
+            val connected = kotlinx.coroutines.withTimeoutOrNull(15_000L) {
+                suspendCancellableCoroutine<Unit> { cont ->
+                    b.connectBtPort(macAddress, object : UiExecute {
+                        override fun onsucess() {
+                            Log.d(TAG, "connectBtPort: SDK retorno onsucess")
+                            cont.resume(Unit)
+                        }
+                        override fun onfailed() {
+                            Log.e(TAG, "connectBtPort: SDK retorno onfailed")
+                            cont.resumeWithException(IllegalStateException(
+                                "No se pudo conectar a $macAddress. Verifica que este emparejada y encendida."
+                            ))
+                        }
+                    })
+                }
+            } ?: throw IllegalStateException(
+                "Timeout (15s) esperando que el SDK confirme la conexion a $macAddress. " +
+                    "La MAC es correcta y la impresora esta emparejada en Settings > Bluetooth?"
+            )
             Result.success(connected)
         } catch (e: SecurityException) {
+            Log.e(TAG, "connectBtPort: SecurityException: ${e.message}")
             Result.failure(IllegalStateException(
                 "Sin permiso BLUETOOTH_CONNECT. Activalo en Settings del dispositivo."
             ))
         } catch (e: Exception) {
+            Log.e(TAG, "connectBtPort: ${e.javaClass.simpleName}: ${e.message}", e)
             Result.failure(e)
         } finally {
             connecting.set(false)

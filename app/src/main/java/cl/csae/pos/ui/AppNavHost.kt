@@ -302,6 +302,14 @@ fun CsaeNavHost() {
                 ConfiguracionScreen(
                     onCambiarModo = cambiarModo,
                     onIrSucursal = { nav.navigate(Routes.SUCURSAL_SELECT) },
+                    // F4.3: cerrar sesion navega a Login y limpia el back stack
+                    // (popUpTo(0) inclusive) para que el user no pueda volver
+                    // a pantallas autenticadas con el boton Back.
+                    onCerrarSesion = {
+                        nav.navigate(Routes.LOGIN) {
+                            popUpTo(0) { inclusive = true }
+                        }
+                    },
                 )
             }
 

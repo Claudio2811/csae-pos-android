@@ -30,8 +30,8 @@ android {
         // - Logging mas detallado: TAG CsaePrinter en cada paso del
         //   bind, connect, y print, para diagnosticar rapido con
         //   `adb logcat -s CsaePrinter CsaeConfig`.
-        versionCode = 17
-        versionName = "0.9.2-f4-printer-fix"
+        versionCode = 19
+        versionName = "0.9.4-f4-printer-config-ui"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
         // URL del API configurable por buildType.
