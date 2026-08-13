@@ -18,6 +18,26 @@ interface PosApiService {
     @POST("api/v1/auth/login")
     suspend fun login(@Body body: LoginRequest): Response<LoginResponseDto>
 
+    /**
+     * F3: perfil completo del usuario autenticado, incluyendo la lista de
+     * sucursales del casino y la lista de casinos (para AdminEmpresa).
+     *
+     * Lo consume el [SucursalSelectScreen] post-login (auto-skip si <=1) y
+     * desde el menu de Configuracion para cambiar manualmente.
+     */
+    @GET("api/v1/auth/me")
+    suspend fun me(): Response<MeResponseDto>
+
+    /**
+     * F3: cambia la sucursal activa del user. Emite un nuevo JWT con el
+     * claim `sucursal_id` actualizado. El cliente debe reemplazar el token
+     * cacheado por el retornado y re-bajar el catalog.
+     */
+    @POST("api/v1/auth/cambiar-sucursal")
+    suspend fun cambiarSucursal(
+        @Body body: CambiarSucursalRequestDto,
+    ): Response<CambiarSucursalResponseDto>
+
     // ============= CASINO TEMA (sprint F16) =============
 
     /**

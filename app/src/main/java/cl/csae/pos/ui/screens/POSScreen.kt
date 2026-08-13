@@ -62,6 +62,13 @@ fun POSScreen(
     var loading by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
+    // F3 (2026-08-13): indicador de sucursal activa en el TopBar.
+    val sucursalId by ServiceLocator.authStore.sucursalId.collectAsState(initial = null)
+    val sucursales by ServiceLocator.authRepo.sucursalesDisponibles.collectAsState()
+    val sucursalActualNombre = remember(sucursalId, sucursales) {
+        sucursales.firstOrNull { it.id == sucursalId }?.nombre ?: "Casino completo"
+    }
+
     fun buscar() {
         if (rut.isBlank()) {
             error = "Ingresa un RUT"
@@ -129,7 +136,10 @@ fun POSScreen(
         topBar = {
             CambiarModoTopBar(
                 title = "POS - Generar Ticket",
-                subtitle = "Operador: ${usuario.displayName}",
+                // F3: el subtitle muestra operador + sucursal activa. Asi el
+                // operador siempre ve en que sucursal esta operando sin
+                // tener que abrir Configuracion.
+                subtitle = "Operador: ${usuario.displayName}  -  Sucursal: $sucursalActualNombre",
                 onCambiarModo = onCambiarModo,
                 actions = {
                     // Sprint 3.3: navegacion movida del NavigationBar a la top bar.

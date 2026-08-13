@@ -21,10 +21,12 @@ import cl.csae.pos.ui.screens.GarzonScreen
 import cl.csae.pos.ui.screens.LoginScreen
 import cl.csae.pos.ui.screens.ModeSelectScreen
 import cl.csae.pos.ui.screens.POSScreen
+import cl.csae.pos.ui.screens.SucursalSelectScreen
 import cl.csae.pos.ui.screens.TicketScreen
 import cl.csae.pos.ui.screens.TotemScreen
 import cl.csae.pos.ui.theme.CsaePosTheme
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 object Routes {
     // Sprint F9 (2026-08-11): un solo LOGIN. Antes habia LOGIN_TOTEM, LOGIN y
@@ -38,6 +40,10 @@ object Routes {
     const val CONFIGURACION = "configuracion"
     const val GARZON = "garzon"
     const val DASHBOARD = "dashboard"
+    // F3: selector de sucursal para OperadorPos. Se muestra post-login si
+    // el casino tiene >1 sucursal. Tambien accesible desde Configuracion
+    // para cambiar manualmente.
+    const val SUCURSAL_SELECT = "sucursal_select"
     const val TICKET = "ticket/{numero}"
     fun ticket(numero: String) = "ticket/$numero"
 }
@@ -101,14 +107,25 @@ fun CsaeNavHost() {
         }
     }
 
-    // F20 (2026-08-12): navegacion REACTIVA para cambios posteriores
-    // (cambio de modo, logout, etc). Si la ruta activa ya es la target, no
-    // hace nada para evitar navegaciones innecesarias.
+    // F20 (2026-08-12) + F3 (2026-08-13): navegacion REACTIVA para cambios
+    // posteriores (cambio de modo, logout, login sin sucursal seleccionada).
+    // Si la ruta activa ya es la target, no hace nada para evitar navegaciones
+    // innecesarias.
+    //
+    // F3: si el user esta logueado, NO tiene sucursal asignada, y el casino
+    // tiene >1 sucursales, ir a SUCURSAL_SELECT antes del destino del modo
+    // preferido. Esto cubre el post-login (sucursalId=null porque el user no
+    // tiene default) y el caso de "cambiar de casino" (que limpia sucursalId).
     val backStackEntry by nav.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
-    LaunchedEffect(isLoggedIn, modoPreferido) {
+    LaunchedEffect(isLoggedIn, modoPreferido, currentUser?.sucursalId) {
+        // F3: si el user esta logueado sin sucursal y el casino tiene >1,
+        // primero a SUCURSAL_SELECT. Si solo tiene 1 o 0, no mostramos
+        // selector y vamos directo al destino del modo preferido.
+        val sucursalesCache = ServiceLocator.authRepo.sucursalesDisponibles.value
         val target = when {
             !isLoggedIn -> Routes.LOGIN
+            currentUser?.sucursalId == null && sucursalesCache.size > 1 -> Routes.SUCURSAL_SELECT
             modoPreferido == "TOTEM" -> Routes.TOTEM
             modoPreferido == "POS" -> Routes.DASHBOARD
             modoPreferido == "GARZON" -> Routes.GARZON
@@ -151,6 +168,34 @@ fun CsaeNavHost() {
                 // y authRepo.logout() quedaba a medias, causando crash o
                 // estado inconsistente (DataStore con token pero UI en login).
                 ServiceLocator.logoutAndReset()
+            }
+        }
+        // F3: navegar al destino del modo preferido despues de seleccionar
+        // una sucursal. Tambien re-baja el catalog (los comensales/servicios
+        // son distintos por sucursal). Se hace en `applicationScope` para
+        // que sobreviva a la destruccion del NavHost por popUpTo(0).
+        val onSucursalSelected = remember(nav, modoPreferido) {
+            {
+                // Re-bajar catalog en background. No bloqueamos la navegacion.
+                ServiceLocator.applicationScope.launch {
+                    try {
+                        ServiceLocator.catalogRepo.refresh()
+                    } catch (_: Exception) { /* best effort */ }
+                }
+                // Navegar al destino del modo preferido (o MODE_SELECT si no
+                // hay). El LaunchedEffect(isLoggedIn, modoPreferido, ...)
+                // podria dispararse tambien, pero `if (currentRoute != target)`
+                // previene la doble navegacion.
+                val target = when (modoPreferido) {
+                    "TOTEM" -> Routes.TOTEM
+                    "POS" -> Routes.DASHBOARD
+                    "GARZON" -> Routes.GARZON
+                    else -> Routes.MODE_SELECT
+                }
+                nav.navigate(target) {
+                    popUpTo(0) { inclusive = true }
+                    launchSingleTop = true
+                }
             }
         }
 
@@ -254,7 +299,22 @@ fun CsaeNavHost() {
 
             // ====== Configuracion ======
             composable(Routes.CONFIGURACION) {
-                ConfiguracionScreen(onCambiarModo = cambiarModo)
+                ConfiguracionScreen(
+                    onCambiarModo = cambiarModo,
+                    onIrSucursal = { nav.navigate(Routes.SUCURSAL_SELECT) },
+                )
+            }
+
+            // ====== F3: Selector de sucursal (post-login + desde Configuracion) ======
+            composable(Routes.SUCURSAL_SELECT) {
+                SucursalSelectScreen(
+                    // Wrapper: SucursalSelectScreen devuelve la sucursalId
+                    // seleccionada, pero el callback del NavHost ignora el
+                    // param (la navegacion ya se hace via el remember del
+                    // `onSucursalSelected` que re-baja catalog + navega).
+                    onSucursalSelected = { _ -> onSucursalSelected() },
+                    onBack = { nav.popBackStack() },
+                )
             }
 
             // ====== Ticket (preview con QR) ======

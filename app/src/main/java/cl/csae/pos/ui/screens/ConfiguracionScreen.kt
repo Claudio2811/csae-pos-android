@@ -43,6 +43,12 @@ import kotlinx.coroutines.launch
 @Composable
 fun ConfiguracionScreen(
     onCambiarModo: () -> Unit = {},
+    /**
+     * F3: navega al SucursalSelectScreen para que el operador cambie la
+     * sucursal activa manualmente. Si el casino no tiene >1 sucursal, el
+     * callback no se usa (la card de sucursal se oculta).
+     */
+    onIrSucursal: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -329,6 +335,43 @@ fun ConfiguracionScreen(
                     )
                     OutlinedButton(onClick = { refrescarTema() }, enabled = !refreshingTheme) {
                         Text(if (refreshingTheme) "Actualizando..." else "Refrescar tema")
+                    }
+                }
+            }
+
+            // F3 (2026-08-13): Seccion 4: Sucursal activa. Muestra la sucursal
+            // actual (o "Casino completo" si no hay) y un boton para cambiar.
+            // Si el casino tiene <=1 sucursales, la card se oculta (no hay nada
+            // que elegir).
+            val sucursalActualId by ServiceLocator.authStore.sucursalId
+                .collectAsState(initial = null)
+            val sucursales by ServiceLocator.authRepo.sucursalesDisponibles.collectAsState()
+            if (sucursales.size > 1 || sucursalActualId != null) {
+                val sucursalActualNombre = sucursales
+                    .firstOrNull { it.id == sucursalActualId }
+                    ?.nombre
+                    ?: "Casino completo"
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                ) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Sucursal activa", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "En que sucursal del casino operas. El catalog (comensales, servicios) se re-baja al cambiar.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        )
+                        Text(
+                            sucursalActualNombre,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        if (sucursales.size > 1) {
+                            OutlinedButton(onClick = onIrSucursal) {
+                                Text("Cambiar sucursal")
+                            }
+                        }
                     }
                 }
             }

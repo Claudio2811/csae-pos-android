@@ -15,20 +15,29 @@ android {
         applicationId = "cl.csae.pos"
         minSdk = 26
         targetSdk = 36
-        // F20+ (2026-08-12): bump de version para reflejar la ronda post-video
-        // de fixes del 2026-08-12:
-        // - F20 visual: TOTEM marca servicios ya consumidos (mismo patron que POS)
-        // - F20 logout race: logoutAndReset() en applicationScope (no se cancela
-        //   al destruirse el NavHost por popUpTo(0))
-        // - F20 currentUser reactivo: era var local, ahora Flow de DataStore
-        //   (evita "Tu cuenta no tiene permisos" fantasma)
-        // - F20 modo preferido reactivo: LaunchedEffect(isLoggedIn, modoPreferido)
-        //   re-navega al cambiar el modo en Configuracion
-        // - F20 ConsumosScreen: startOfDayLocal->UTC y carga inicial independiente
-        //   del dispositivo
-        // - F20 device selector logging: incluye restauranteId del JWT en CsaeConfig log
-        versionCode = 14
-        versionName = "0.8.0-f20-postvideo"
+        // F3 (2026-08-13): bump de version para reflejar el selector de
+        // sucursal del OperadorPos:
+        // - GET /api/v1/auth/me: nuevo endpoint que devuelve perfil + lista
+        //   de sucursales del casino + lista de casinos (multi-casino
+        //   AdminEmpresa).
+        // - POST /api/v1/auth/cambiar-sucursal: emite nuevo JWT con el
+        //   claim sucursal_id actualizado. El cliente reemplaza el cache
+        //   y re-baja el catalog.
+        // - SucursalSelectScreen: pantalla nueva post-login si el casino
+        //   tiene >1 sucursal. Auto-skip si tiene 0 o 1.
+        // - AppNavHost: LaunchedEffect reactivo que detecta login sin
+        //   sucursalId y redirige a SUCURSAL_SELECT antes del destino del
+        //   modo preferido. Re-baja el catalog en onSucursalSelected.
+        // - ConfiguracionScreen: nueva seccion "Sucursal activa" con
+        //   boton "Cambiar sucursal" si hay >1 disponibles.
+        // - POSScreen: subtitle del TopBar muestra la sucursal activa
+        //   ("Operador: X - Sucursal: Y") para que el operador siempre
+        //   vea en que sucursal esta.
+        // - AuthRepository.sucursalesDisponibles: StateFlow<List<SucursalDto>>
+        //   que cachea la lista del casino (evita pegarle al API cada
+        //   vez que se abre el selector).
+        versionCode = 15
+        versionName = "0.9.0-f3-sucursal"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
         // URL del API configurable por buildType.

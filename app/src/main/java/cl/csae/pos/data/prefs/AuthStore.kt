@@ -44,6 +44,12 @@ class AuthStore(private val context: Context) {
     val displayName: Flow<String?> = context.authDataStore.data.map { it[KEY_NAME] }
     val rol: Flow<String?> = context.authDataStore.data.map { it[KEY_ROL] }
     val restauranteId: Flow<String?> = context.authDataStore.data.map { it[KEY_RESTAURANTE] }
+    /**
+     * F3: sucursal activa del OperadorPos. Persiste entre sesiones (igual
+     * que restauranteId). null = "casino completo" (cuando el casino no
+     * tiene sucursales o el user eligio "ver todo el casino").
+     */
+    val sucursalId: Flow<String?> = context.authDataStore.data.map { it[KEY_SUCURSAL] }
     val modoPreferido: Flow<String?> = context.authDataStore.data.map { it[KEY_MODO_PREFERIDO] }
 
     /**
@@ -84,13 +90,37 @@ class AuthStore(private val context: Context) {
      */
     suspend fun getLastSeenVersionCode(): Int = context.authDataStore.data.first()[KEY_VERSION_CODE] ?: 0
 
-    suspend fun save(token: String, email: String, displayName: String, rol: String, restauranteId: String?) {
+    suspend fun save(
+        token: String,
+        email: String,
+        displayName: String,
+        rol: String,
+        restauranteId: String?,
+        sucursalId: String? = null,
+    ) {
         context.authDataStore.edit { prefs ->
             prefs[KEY_TOKEN] = token
             prefs[KEY_EMAIL] = email
             prefs[KEY_NAME] = displayName
             prefs[KEY_ROL] = rol
             if (restauranteId != null) prefs[KEY_RESTAURANTE] = restauranteId
+            // F3: si el login devuelve sucursalId (sucursal default del user),
+            // la persistimos. Si es null, NO borramos la anterior — eso lo
+            // hace `setSucursal(null)` cuando el user elige "casino completo".
+            if (sucursalId != null) prefs[KEY_SUCURSAL] = sucursalId
+        }
+    }
+
+    /**
+     * F3: cambia la sucursal activa. Llamado desde [AuthRepository.cambiarSucursal]
+     * despues de un POST /api/v1/auth/cambiar-sucursal exitoso. Tambien desde
+     * el SucursalSelectScreen si el user quiere volver a "casino completo"
+     * (pasando null).
+     */
+    suspend fun setSucursal(sucursalId: String?) {
+        context.authDataStore.edit { prefs ->
+            if (sucursalId == null) prefs.remove(KEY_SUCURSAL)
+            else prefs[KEY_SUCURSAL] = sucursalId
         }
     }
 
@@ -204,6 +234,7 @@ class AuthStore(private val context: Context) {
         val KEY_NAME = stringPreferencesKey("display_name")
         val KEY_ROL = stringPreferencesKey("rol")
         val KEY_RESTAURANTE = stringPreferencesKey("restaurante_id")
+        val KEY_SUCURSAL = stringPreferencesKey("sucursal_id")
         val KEY_MODO_PREFERIDO = stringPreferencesKey("modo_preferido")
         val KEY_IMPRESORA_MAC = stringPreferencesKey("impresora_mac")
         val KEY_IMPRESORA_NOMBRE = stringPreferencesKey("impresora_nombre")

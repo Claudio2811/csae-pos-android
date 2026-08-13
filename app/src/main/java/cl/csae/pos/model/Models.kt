@@ -17,6 +17,10 @@ data class UsuarioPos(
     val displayName: String,
     val rol: String,           // "OperadorPOS" o "AdminCasino"
     val restauranteId: String?, // null para AdminEmpresa (no es de un casino especifico)
+    // F3: sucursal activa del OperadorPos. null = "casino completo" (sin
+    // sucursal o user eligio ver todo). El backend lo popula en el JWT y
+    // llega via /auth/me o /auth/cambiar-sucursal.
+    val sucursalId: String? = null,
     // Compat: el codigo mock usaba `username`. Lo dejamos mapeado.
     val username: String = email,
 )
