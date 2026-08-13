@@ -12,6 +12,11 @@ captures/
 *.aab
 *.aar
 output-metadata.json
+# F21: SDK de la impresora POS (JAR) bajado manualmente desde el vendor
+# (PPT305BT). El codigo demo viene en printer-sdk/ como referencia, no
+# para commitear. Ver docs/sprint-5.6-instalacion-sdk-impresora.md (TODO).
+app/libs/posprinterconnectandsendsdk.jar
+app/libs/printer-sdk/
 
 # Kotlin
 *.hprof

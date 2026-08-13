@@ -351,15 +351,20 @@ fun TicketScreen(
                 showPrinterDialog = false
                 printing = true
                 scope.launch {
-                    // Sprint 3.2: usar imprimirTicketConQr con el qrToken real
-                    // del backend (en ticket.qrToken). Fallback al sintetico si
-                    // el ticket no tiene qrToken (tickets pre-Sprint-3.2).
+                    // F4 (2026-08-13): con el SDK vendor hay que conectar
+                    // ANTES de imprimir. Conectar es idempotente: si ya esta
+                    // conectado, retorna success.
                     val qrToken = ticket.qrToken
                         ?: "CSAE-${ticket.numero}-${ticket.comensal.rut}"
                     // Regeneramos el QR para el PDF con sizePx fijo.
                     val qrBitmap = ServiceLocator.printerService.generarQrBitmap(qrToken, sizePx = 512)
-                    val r = ServiceLocator.printerService.imprimirTicketConQr(
-                        deviceAddress = device.address,
+                    val conn = ServiceLocator.printerService.connectBtPort(device.address)
+                    if (conn.isFailure) {
+                        printing = false
+                        snackbar.showSnackbar("No se pudo conectar a la impresora: ${conn.exceptionOrNull()?.message}")
+                        return@launch
+                    }
+                    val r = ServiceLocator.printerService.imprimirTicket(
                         ticket = ticket,
                         qrToken = qrToken,
                     )

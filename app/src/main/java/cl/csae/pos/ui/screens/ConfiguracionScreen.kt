@@ -180,9 +180,19 @@ fun ConfiguracionScreen(
             return
         }
         printing = true
-        printStatus = "Imprimiendo..."
+        printStatus = "Conectando..."
         scope.launch {
-            val r = ServiceLocator.printerService.imprimirPrueba(mac)
+            // F4: con el SDK vendor hay que conectar ANTES de imprimir (antes
+            // el PrinterService abria el socket por cada operacion). Conectar
+            // es idempotente: si ya esta conectado, retorna success.
+            val conn = ServiceLocator.printerService.connectBtPort(mac)
+            if (conn.isFailure) {
+                printing = false
+                printStatus = "Error conectando: ${conn.exceptionOrNull()?.message}"
+                return@launch
+            }
+            printStatus = "Imprimiendo prueba..."
+            val r = ServiceLocator.printerService.imprimirPrueba()
             printing = false
             r.onSuccess { printStatus = "OK: prueba enviada a ${nombreImpresora ?: mac}." }
              .onFailure { printStatus = "Error: ${it.message}" }

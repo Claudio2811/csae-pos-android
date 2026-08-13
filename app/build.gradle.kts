@@ -15,29 +15,21 @@ android {
         applicationId = "cl.csae.pos"
         minSdk = 26
         targetSdk = 36
-        // F3 (2026-08-13): bump de version para reflejar el selector de
-        // sucursal del OperadorPos:
-        // - GET /api/v1/auth/me: nuevo endpoint que devuelve perfil + lista
-        //   de sucursales del casino + lista de casinos (multi-casino
-        //   AdminEmpresa).
-        // - POST /api/v1/auth/cambiar-sucursal: emite nuevo JWT con el
-        //   claim sucursal_id actualizado. El cliente reemplaza el cache
-        //   y re-baja el catalog.
-        // - SucursalSelectScreen: pantalla nueva post-login si el casino
-        //   tiene >1 sucursal. Auto-skip si tiene 0 o 1.
-        // - AppNavHost: LaunchedEffect reactivo que detecta login sin
-        //   sucursalId y redirige a SUCURSAL_SELECT antes del destino del
-        //   modo preferido. Re-baja el catalog en onSucursalSelected.
-        // - ConfiguracionScreen: nueva seccion "Sucursal activa" con
-        //   boton "Cambiar sucursal" si hay >1 disponibles.
-        // - POSScreen: subtitle del TopBar muestra la sucursal activa
-        //   ("Operador: X - Sucursal: Y") para que el operador siempre
-        //   vea en que sucursal esta.
-        // - AuthRepository.sucursalesDisponibles: StateFlow<List<SucursalDto>>
-        //   que cachea la lista del casino (evita pegarle al API cada
-        //   vez que se abre el selector).
-        versionCode = 15
-        versionName = "0.9.0-f3-sucursal"
+        // F4 (2026-08-13): bump de version para reflejar el SDK de la
+        // impresora POS PPT305BT integrado.
+        // - PrinterService reescrito para usar el SDK real (JAR vendor
+        //   net.posprinter.posprinterface.IMyBinder via AIDL Service).
+        // - Build: posprinterconnectandsendsdk.jar agregado a app/libs/
+        //   (ignorado en git, ver .gitignore).
+        // - AndroidManifest: nuevo <service> net.posprinter.service
+        //   .PosprinterService + permisos BLUETOOTH/BLUETOOTH_CONNECT/
+        //   BLUETOOTH_SCAN/USB para SDK 31+ (Android 12+).
+        // - ConfiguracionScreen: nueva seccion "Impresora Bluetooth" que
+        //   usa el SDK real para conectar e imprimir (antes era stub).
+        // - TicketScreen: el boton "Imprimir" ahora usa el SDK para
+        //   mandar el contenido del ticket al printerService real.
+        versionCode = 16
+        versionName = "0.9.1-f4-printer-sdk"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
         // URL del API configurable por buildType.
@@ -155,6 +147,14 @@ dependencies {
     // = ultima estable al 2026-08-02. 16 KB page-aligned (cumple Google
     // Play 16 KB page size requirement, deadline Feb 1 2027).
     implementation("io.coil-kt:coil-compose:2.7.0")
+
+    // F4 (2026-08-13): SDK de la impresora POS PPT305BT (Bluetooth ESC/POS).
+    // JAR vendor bajado manualmente (ver .gitignore). El SDK expone un
+    // IMyBinder AIDL que se bindea desde un Service Android declarado en
+    // el manifest del proyecto. Ver PrinterService.kt para el patron
+    // de uso (connectBtPort/writeDataByYouself/disconnectCurrentPort).
+    // Antes: stub que solo loggeaba (no imprimia nada). Ahora: real.
+    implementation(files("libs/posprinterconnectandsendsdk.jar"))
 
     // Tests
     testImplementation("junit:junit:4.13.2")

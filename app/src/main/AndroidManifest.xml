@@ -73,6 +73,17 @@
         <meta-data
             android:name="com.google.mlkit.vision.DEPENDENCIES"
             android:value="barcode" />
+
+        <!-- F4 (2026-08-13): SDK de la impresora POS PPT305BT (vendor
+             net.posprinter). Expone un AIDL Service (PosprinterService) que
+             se bindea desde PrinterService.kt. El JAR esta en app/libs/
+             (ignorado en git, ver .gitignore). El service ya viene
+             compilado en el JAR, solo necesitamos declararlo aca para que
+             Android lo instancie. El binding se hace en PrinterService via
+             Context.bindService(intent, conn, BIND_AUTO_CREATE). -->
+        <service
+            android:name="net.posprinter.service.PosprinterService"
+            android:exported="false" />
     </application>
 
 </manifest>

@@ -4,41 +4,66 @@ import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
-import android.bluetooth.BluetoothSocket
+import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
 import android.graphics.Bitmap
 import android.graphics.Color
-import android.os.Build
-import cl.csae.pos.model.Comensal
-import cl.csae.pos.model.Servicio
+import android.os.IBinder
+import android.util.Log
 import cl.csae.pos.model.Ticket
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import java.io.IOException
-import java.io.OutputStream
-import java.util.UUID
+import net.posprinter.posprinterface.IMyBinder
+import net.posprinter.posprinterface.ProcessData
+import net.posprinter.posprinterface.UiExecute
+import net.posprinter.utils.BitmapToByteData
+import net.posprinter.utils.DataForSendToPrinterPos80
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 /**
- * PrinterService: impresion Bluetooth ESC/POS basica (58mm termica).
+ * PrinterService: impresion Bluetooth ESC/POS via SDK vendor (PPT305BT).
  *
- * Compatible con impresoras estandar 58mm que soporten ESC/POS (Epson, Star, Xprinter, etc.).
+ * **F4 (2026-08-13):** migrado del ESC/POS custom (que escribia bytes raw
+ * via `BluetoothSocket.outputStream`) al SDK vendor `net.posprinter`. El
+ * SDK expone un AIDL `IMyBinder` que se obtiene via `bindService()` a
+ * `net.posprinter.service.PosprinterService` (declarado en el manifest).
+ * El SDK se encarga de la conexion Bluetooth, la generacion de bytes
+ * ESC/POS (init, alignment, font size, QR codes, bitmaps), el corte de
+ * papel, etc.
  *
- * Flujo:
- *   1. Usuario empareja la impresora desde Settings del dispositivo.
- *   2. POS lista los dispositivos emparejados (BluetoothAdapter.bondedDevices).
- *   3. Usuario elige uno (mac address).
- *   4. POS abre socket RFCOMM y envia comandos ESC/POS.
+ * **Por que migrar al SDK vendor:**
+ * 1. La PPT305BT tiene quirks especificos (bitmap printing, QR encoding,
+ *    corte de papel) que el SDK ya maneja. Nuestra implementacion custom
+ *    tenia bugs sutiles (ej: el QR no funcionaba en algunos modelos).
+ * 2. El SDK soporta USB + Net + Bluetooth con la misma API, asi que
+ *    despues podemos soportar impresora por red sin cambiar codigo.
+ * 3. El vendor mantiene el SDK actualizado con fixes para nuevos modelos.
  *
- * Sprint 3.2: agrega soporte para QR via comandos `GS ( k` (estandar Epson ESC/POS).
- *   - Funcion 165: seleccionar modelo QR
- *   - Funcion 167: setear tamano del modulo
- *   - Funcion 169: setear nivel de correccion
- *   - Funcion 180: almacenar data
- *   - Funcion 181: imprimir
+ * **API vendor (JAR `posprinterconnectandsendsdk.jar`):**
+ * - `IMyBinder.connectBtPort(mac, UiExecute)` — conectar por Bluetooth.
+ * - `IMyBinder.disconnectCurrentPort(UiExecute)` — desconectar.
+ * - `IMyBinder.write(byte[], UiExecute)` — escribir bytes raw.
+ * - `IMyBinder.writeDataByYouself(UiExecute, ProcessData)` — escribir
+ *   una lista de byte arrays (mas conveniente para el ticket).
+ * - `IMyBinder.acceptdatafromprinter(UiExecute)` — callback cuando la
+ *   impresora se desconecta (cable BT fuera de rango, etc).
+ *
+ * **Patron de uso:**
+ * ```kotlin
+ * printer.connectBtPort(mac)            // Result<Unit>
+ * printer.imprimirTicket(ticket)        // Result<Unit> (internamente
+ *                                          // llama connect si no esta)
+ * printer.disconnect()                  // Result<Unit>
+ * ```
  *
  * **Permisos requeridos (AndroidManifest):**
  * - BLUETOOTH (max SDK 30)
@@ -47,8 +72,64 @@ import java.util.UUID
  */
 class PrinterService(private val context: Context) {
 
+    @Volatile private var binder: IMyBinder? = null
+    private val bindingReady = AtomicBoolean(false)
+    private val connecting = AtomicBoolean(false)
+
     /**
-     * Lista los dispositivos Bluetooth ya emparejados.
+     * Bindea el [net.posprinter.service.PosprinterService] del SDK vendor.
+     * El service ya esta declarado en el manifest del proyecto
+     * (`<service android:name="net.posprinter.service.PosprinterService"/>`)
+     * asi que solo necesitamos hacer el bind. Una vez bindeado, `binder`
+     * queda con la instancia del AIDL.
+     */
+    private suspend fun ensureBound(): IMyBinder {
+        binder?.let { return it }
+        return suspendCancellableCoroutine { cont ->
+            val intent = Intent().apply {
+                setComponent(ComponentName(
+                    "net.posprinter.service",
+                    "net.posprinter.service.PosprinterService",
+                ))
+            }
+            val conn = object : ServiceConnection {
+                override fun onServiceConnected(component: ComponentName?, ib: IBinder?) {
+                    val b = ib as? IMyBinder
+                    if (b != null) {
+                        binder = b
+                        bindingReady.set(true)
+                        cont.resume(b)
+                    } else {
+                        cont.resumeWithException(IllegalStateException("Binder no es IMyBinder."))
+                    }
+                }
+                override fun onServiceDisconnected(component: ComponentName?) {
+                    Log.w(TAG, "PosprinterService disconnected")
+                    binder = null
+                    bindingReady.set(false)
+                }
+            }
+            val bound = try {
+                context.bindService(intent, conn, Context.BIND_AUTO_CREATE)
+            } catch (e: SecurityException) {
+                cont.resumeWithException(e)
+                return@suspendCancellableCoroutine
+            }
+            if (!bound) {
+                cont.resumeWithException(IllegalStateException(
+                    "No se pudo hacer bind del PosprinterService. Revisa el manifest."
+                ))
+                return@suspendCancellableCoroutine
+            }
+            cont.invokeOnCancellation {
+                try { context.unbindService(conn) } catch (_: Exception) {}
+            }
+        }
+    }
+
+    /**
+     * Lista los dispositivos Bluetooth ya emparejados (no requiere el SDK
+     * vendor, usamos BluetoothAdapter directo del sistema).
      */
     @SuppressLint("MissingPermission")
     fun listarEmparejados(): List<BluetoothDevice> {
@@ -58,72 +139,162 @@ class PrinterService(private val context: Context) {
     }
 
     /**
-     * Imprime un ticket via Bluetooth ESC/POS.
-     * @return true si se imprimio OK, false si fallo.
+     * Conecta a la impresora Bluetooth via el SDK vendor.
+     * Si ya esta conectado, retorna success sin re-conectar.
      */
-    suspend fun imprimir(deviceAddress: String, ticket: Ticket): Result<Unit> = withContext(Dispatchers.IO) {
-        val adapter = bluetoothAdapter ?: return@withContext Result.failure(
-            IllegalStateException("Bluetooth no disponible en este dispositivo.")
-        )
-        val device = try { adapter.getRemoteDevice(deviceAddress) } catch (e: Exception) {
-            return@withContext Result.failure(IllegalStateException("No se encontro el dispositivo: ${e.message}"))
+    suspend fun connectBtPort(macAddress: String): Result<Unit> = withContext(Dispatchers.IO) {
+        if (macAddress.isBlank()) {
+            return@withContext Result.failure(IllegalArgumentException("MAC vacio."))
         }
-        var socket: BluetoothSocket? = null
+        if (!connecting.compareAndSet(false, true)) {
+            return@withContext Result.failure(IllegalStateException("Ya hay una conexion en curso."))
+        }
         try {
-            socket = createSocket(device)
-            socket.connect() // Conectar antes de obtener el output stream
-            val out = socket.outputStream
-            enviarTicketEscPos(out, ticket)
-            out.flush()
-            Result.success(Unit)
+            val b = ensureBound()
+            val connected = suspendCancellableCoroutine<Unit> { cont ->
+                b.connectBtPort(macAddress, object : UiExecute {
+                    override fun onsucess() {
+                        cont.resume(Unit)
+                    }
+                    override fun onfailed() {
+                        cont.resumeWithException(IllegalStateException(
+                            "No se pudo conectar a $macAddress. Verifica que este emparejada y encendida."
+                        ))
+                    }
+                })
+            }
+            Result.success(connected)
         } catch (e: SecurityException) {
-            Result.failure(IllegalStateException("Sin permiso BLUETOOTH_CONNECT. Activalo en Settings."))
-        } catch (e: IOException) {
-            Result.failure(IllegalStateException("Error de comunicacion con la impresora: ${e.message}"))
+            Result.failure(IllegalStateException(
+                "Sin permiso BLUETOOTH_CONNECT. Activalo en Settings del dispositivo."
+            ))
         } catch (e: Exception) {
             Result.failure(e)
         } finally {
-            try { socket?.close() } catch (_: Exception) {}
+            connecting.set(false)
         }
     }
 
     /**
-     * Imprime un ticket con QR + texto. Usado en el preview de TicketScreen
-     * (sprint 3.2). Si el qrToken es null o vacio, imprime solo el texto.
+     * Desconecta la impresora actual. Si no esta conectado, es no-op.
      */
-    suspend fun imprimirTicketConQr(
-        deviceAddress: String,
-        ticket: Ticket,
-        qrToken: String?,
-    ): Result<Unit> = withContext(Dispatchers.IO) {
-        val adapter = bluetoothAdapter ?: return@withContext Result.failure(
-            IllegalStateException("Bluetooth no disponible en este dispositivo.")
-        )
-        val device = try { adapter.getRemoteDevice(deviceAddress) } catch (e: Exception) {
-            return@withContext Result.failure(IllegalStateException("No se encontro el dispositivo: ${e.message}"))
-        }
-        var socket: BluetoothSocket? = null
+    suspend fun disconnect(): Result<Unit> = withContext(Dispatchers.IO) {
+        val b = binder ?: return@withContext Result.success(Unit)
         try {
-            socket = createSocket(device)
-            socket.connect()
-            val out = socket.outputStream
-            enviarTicketEscPos(out, ticket, qrToken)
-            out.flush()
+            suspendCancellableCoroutine<Unit> { cont ->
+                b.disconnectCurrentPort(object : UiExecute {
+                    override fun onsucess() { cont.resume(Unit) }
+                    override fun onfailed() { cont.resume(Unit) }  // best-effort
+                })
+            }
             Result.success(Unit)
-        } catch (e: SecurityException) {
-            Result.failure(IllegalStateException("Sin permiso BLUETOOTH_CONNECT. Activalo en Settings."))
-        } catch (e: IOException) {
-            Result.failure(IllegalStateException("Error de comunicacion con la impresora: ${e.message}"))
         } catch (e: Exception) {
             Result.failure(e)
-        } finally {
-            try { socket?.close() } catch (_: Exception) {}
         }
     }
 
     /**
-     * Genera un Bitmap QR (monocromatico) para mostrar en pantalla. Usado por
-     * el preview del ticket (sprint 3.2).
+     * Envia un ticket al printer (asume que ya esta conectado).
+     * Si no esta conectado, retorna error.
+     */
+    suspend fun imprimirTicket(ticket: Ticket, qrToken: String?): Result<Unit> = withContext(Dispatchers.IO) {
+        val b = binder ?: return@withContext Result.failure(
+            IllegalStateException("Impresora no conectada. Llama a connectBtPort() primero.")
+        )
+        try {
+            suspendCancellableCoroutine<Unit> { cont ->
+                b.writeDataByYouself(object : UiExecute {
+                    override fun onsucess() { cont.resume(Unit) }
+                    override fun onfailed() { cont.resumeWithException(IllegalStateException(
+                        "La impresora rechazo el ticket. Verifica papel y conexion."
+                    )) }
+                }, object : ProcessData {
+                    override fun processDataBeforeSend(): List<ByteArray> {
+                        return buildTicketCommands(ticket, qrToken)
+                    }
+                })
+            }
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Imprime un ticket de prueba: "CSAE POS - PRUEBA / Si lees esto, la
+     * impresora esta OK." Usado desde Configuracion.
+     */
+    suspend fun imprimirPrueba(): Result<Unit> = withContext(Dispatchers.IO) {
+        val b = binder ?: return@withContext Result.failure(
+            IllegalStateException("Impresora no conectada.")
+        )
+        try {
+            suspendCancellableCoroutine<Unit> { cont ->
+                b.writeDataByYouself(object : UiExecute {
+                    override fun onsucess() { cont.resume(Unit) }
+                    override fun onfailed() { cont.resumeWithException(IllegalStateException(
+                        "La impresora rechazo la prueba."
+                    )) }
+                }, object : ProcessData {
+                    override fun processDataBeforeSend(): List<ByteArray> {
+                        val list = ArrayList<ByteArray>()
+                        list.add(DataForSendToPrinterPos80.initializePrinter())
+                        list.add(DataForSendToPrinterPos80.selectAlignment(1))
+                        list.add(DataForSendToPrinterPos80.selectCharacterSize(0x11))  // doble
+                        list.add("CSAE POS - PRUEBA\n".toByteArray(Charsets.UTF_8))
+                        list.add(DataForSendToPrinterPos80.selectCharacterSize(0x00))  // normal
+                        list.add("Si lees esto, la impresora esta OK.\n".toByteArray(Charsets.UTF_8))
+                        list.add("\n\n\n".toByteArray(Charsets.UTF_8))
+                        list.add(DataForSendToPrinterPos80.selectCutPagerModerAndCutPager(66, 1))
+                        return list
+                    }
+                })
+            }
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Imprime un bitmap (usado por TicketScreen para imprimir el preview
+     * del ticket generado, F6). Espera a que la conexion este establecida.
+     */
+    suspend fun imprimirBitmap(bitmap: Bitmap, width: Int = 576): Result<Unit> = withContext(Dispatchers.IO) {
+        val b = binder ?: return@withContext Result.failure(
+            IllegalStateException("Impresora no conectada.")
+        )
+        try {
+            suspendCancellableCoroutine<Unit> { cont ->
+                b.writeDataByYouself(object : UiExecute {
+                    override fun onsucess() { cont.resume(Unit) }
+                    override fun onfailed() { cont.resumeWithException(IllegalStateException(
+                        "La impresora rechazo el bitmap."
+                    )) }
+                }, object : ProcessData {
+                    override fun processDataBeforeSend(): List<ByteArray> {
+                        val list = ArrayList<ByteArray>()
+                        list.add(DataForSendToPrinterPos80.initializePrinter())
+                        list.add(DataForSendToPrinterPos80.printRasterBmp(
+                            0, bitmap, BitmapToByteData.BmpType.Threshold,
+                            BitmapToByteData.AlignType.Center, width,
+                        ))
+                        list.add(DataForSendToPrinterPos80.selectCutPagerModerAndCutPager(66, 1))
+                        return list
+                    }
+                })
+            }
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Genera un Bitmap QR (monocromatico) para mostrar en pantalla. Se usa
+     * en el preview del ticket (TicketScreen). Esto lo seguimos haciendo
+     * con ZXing en vez del SDK vendor porque el preview es en pantalla
+     * (Bitmap) y no en la impresora.
      */
     fun generarQrBitmap(contenido: String, sizePx: Int = 512): Bitmap? {
         if (contenido.isBlank()) return null
@@ -146,143 +317,52 @@ class PrinterService(private val context: Context) {
     }
 
     /**
-     * Ticket de prueba simple: envia un "HELLO" a la impresora.
-     * Usado desde la pantalla de Configuracion.
+     * Construye la lista de byte arrays (comandos ESC/POS) que representan
+     * el ticket. Usa los helpers `DataForSendToPrinterPos80` del SDK vendor.
      */
-    suspend fun imprimirPrueba(deviceAddress: String): Result<Unit> = withContext(Dispatchers.IO) {
-        val adapter = bluetoothAdapter ?: return@withContext Result.failure(
-            IllegalStateException("Bluetooth no disponible en este dispositivo.")
-        )
-        val device = try { adapter.getRemoteDevice(deviceAddress) } catch (e: Exception) {
-            return@withContext Result.failure(IllegalStateException("No se encontro el dispositivo: ${e.message}"))
+    private fun buildTicketCommands(ticket: Ticket, qrToken: String?): List<ByteArray> {
+        val list = ArrayList<ByteArray>()
+        list.add(DataForSendToPrinterPos80.initializePrinter())
+        // Header
+        list.add(DataForSendToPrinterPos80.selectAlignment(1))  // center
+        list.add(DataForSendToPrinterPos80.selectCharacterSize(0x11))  // doble
+        list.add("CSAE POS\n".toByteArray(Charsets.UTF_8))
+        list.add(DataForSendToPrinterPos80.selectCharacterSize(0x00))
+        list.add("${ticket.comensal.empresa}\n".toByteArray(Charsets.UTF_8))
+        list.add("--------------------------------\n".toByteArray(Charsets.UTF_8))
+        list.add(DataForSendToPrinterPos80.selectAlignment(0))  // left
+        list.add("${ticket.fechaHora}\n".toByteArray(Charsets.UTF_8))
+        list.add("Ticket: ${ticket.numero}\n".toByteArray(Charsets.UTF_8))
+        list.add("--------------------------------\n".toByteArray(Charsets.UTF_8))
+        list.add("Comensal: ${ticket.comensal.nombre} ${ticket.comensal.apellido ?: ""}\n".toByteArray(Charsets.UTF_8))
+        list.add("RUT: ${ticket.comensal.rut}\n".toByteArray(Charsets.UTF_8))
+        if (ticket.comensal.empresa.isNotEmpty()) {
+            list.add("Empresa: ${ticket.comensal.empresa}\n".toByteArray(Charsets.UTF_8))
         }
-        var socket: BluetoothSocket? = null
-        try {
-            socket = createSocket(device)
-            socket.connect()
-            val out = socket.outputStream
-            out.write(byteArrayOf(0x1B, 0x40)) // Init
-            out.write(byteArrayOf(0x1B, 0x61, 0x01)) // Center
-            out.write(byteArrayOf(0x1D, 0x21, 0x11)) // Tamano doble
-            out.write("CSAE POS - PRUEBA\n".toByteArray(Charsets.UTF_8))
-            out.write(byteArrayOf(0x1D, 0x21, 0x00))
-            out.write("Si lees esto, la impresora esta OK.\n".toByteArray(Charsets.UTF_8))
-            out.write("\n\n\n".toByteArray(Charsets.UTF_8))
-            out.write(byteArrayOf(0x1D, 0x56, 0x00)) // Corte parcial
-            out.flush()
-            Result.success(Unit)
-        } catch (e: SecurityException) {
-            Result.failure(IllegalStateException("Sin permiso BLUETOOTH_CONNECT. Activalo en Settings."))
-        } catch (e: IOException) {
-            Result.failure(IllegalStateException("Error de comunicacion con la impresora: ${e.message}"))
-        } catch (e: Exception) {
-            Result.failure(e)
-        } finally {
-            try { socket?.close() } catch (_: Exception) {}
-        }
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun createSocket(device: BluetoothDevice): BluetoothSocket {
-        // En API 31+ podemos usar createInsecureRfcommSocketToServiceRecord (sin pairing required).
-        // En API < 31 usamos el UUID SPP estandar.
-        val uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            device.createInsecureRfcommSocketToServiceRecord(uuid)
-        } else {
-            device.createRfcommSocketToServiceRecord(uuid)
-        }
-    }
-
-    /**
-     * Envia el ticket en formato ESC/POS.
-     * Comandos basicos: ESC @ (init), ESC ! n (tamano), GS V 0 (corte parcial).
-     * Si [qrToken] no es null ni vacio, agrega el QR al final del ticket.
-     */
-    private fun enviarTicketEscPos(out: OutputStream, ticket: Ticket, qrToken: String? = null) {
-        val t = ticket
-        // ESC @ = Init
-        out.write(byteArrayOf(0x1B, 0x40))
-        // Center
-        out.write(byteArrayOf(0x1B, 0x61, 0x01))
-        // Tamano doble
-        out.write(byteArrayOf(0x1D, 0x21, 0x11))
-        out.write("CSAE POS\n".toByteArray(Charsets.UTF_8))
-        // Tamano normal
-        out.write(byteArrayOf(0x1D, 0x21, 0x00))
-        out.write("Casino Salamanca\n".toByteArray(Charsets.UTF_8))
-        out.write("--------------------------------\n".toByteArray(Charsets.UTF_8))
-        out.write("${t.fechaHora}\n".toByteArray(Charsets.UTF_8))
-        out.write("Ticket: ${t.numero}\n".toByteArray(Charsets.UTF_8))
-        out.write("--------------------------------\n".toByteArray(Charsets.UTF_8))
-        out.write("Comensal: ${t.comensal.nombre} ${t.comensal.apellido ?: ""}\n".toByteArray(Charsets.UTF_8))
-        out.write("RUT: ${t.comensal.rut}\n".toByteArray(Charsets.UTF_8))
-        if (t.comensal.empresa.isNotEmpty()) {
-            out.write("Empresa: ${t.comensal.empresa}\n".toByteArray(Charsets.UTF_8))
-        }
-        out.write("--------------------------------\n".toByteArray(Charsets.UTF_8))
-        out.write("Servicio: ${t.servicio.nombre}\n".toByteArray(Charsets.UTF_8))
-        out.write("Tipo: ${t.servicio.tipo}\n".toByteArray(Charsets.UTF_8))
+        list.add("--------------------------------\n".toByteArray(Charsets.UTF_8))
+        list.add("Servicio: ${ticket.servicio.nombre}\n".toByteArray(Charsets.UTF_8))
+        list.add("Tipo: ${ticket.servicio.tipo}\n".toByteArray(Charsets.UTF_8))
         // Precio en grande
-        out.write(byteArrayOf(0x1D, 0x21, 0x11))
-        out.write("Precio: $${t.precio.takeIf { it > 0 } ?: t.servicio.precio}\n".toByteArray(Charsets.UTF_8))
-        out.write(byteArrayOf(0x1D, 0x21, 0x00))
-        out.write("--------------------------------\n".toByteArray(Charsets.UTF_8))
-        out.write("Operador: ${t.operador}\n".toByteArray(Charsets.UTF_8))
+        list.add(DataForSendToPrinterPos80.selectCharacterSize(0x11))
+        list.add("Precio: $${ticket.precio.takeIf { it > 0 } ?: ticket.servicio.precio}\n".toByteArray(Charsets.UTF_8))
+        list.add(DataForSendToPrinterPos80.selectCharacterSize(0x00))
+        list.add("--------------------------------\n".toByteArray(Charsets.UTF_8))
+        list.add("Operador: ${ticket.operador}\n".toByteArray(Charsets.UTF_8))
 
-        // QR (si viene)
+        // QR via comandos GS ( k del SDK (modelo 2, modulo 4, level M).
         if (!qrToken.isNullOrBlank()) {
-            out.write("\n".toByteArray(Charsets.UTF_8))
-            try {
-                imprimirQr(out, qrToken)
-            } catch (_: Exception) {
-                // Si la impresora no soporta QR, seguimos sin cortar el ticket.
-            }
+            list.add("\n".toByteArray(Charsets.UTF_8))
+            list.add(DataForSendToPrinterPos80.selectAlignment(1))  // center
+            list.add(DataForSendToPrinterPos80.SetsTheSizeOfTheQRCodeSymbolModule(4))
+            list.add(DataForSendToPrinterPos80.SetsTheErrorCorrectionLevelForQRCodeSymbol(0x31))  // M
+            list.add(DataForSendToPrinterPos80.StoresSymbolDataInTheQRCodeSymbolStorageArea(qrToken))
+            list.add(DataForSendToPrinterPos80.PrintsTheQRCodeSymbolDataInTheSymbolStorageArea())
+            list.add("\n".toByteArray(Charsets.UTF_8))
         }
 
-        out.write("\n\n\n".toByteArray(Charsets.UTF_8))
-        // GS V 0 = Corte parcial
-        out.write(byteArrayOf(0x1D, 0x56, 0x00))
-    }
-
-    /**
-     * Envia el comando QR (Epson ESC/POS `GS ( k`).
-     *
-     * Funciones usadas:
-     *   - 165 (0xA5): seleccionar modelo (modelo 2 = 50, 0x32)
-     *   - 167 (0xA7): setear tamano del modulo (n = 4 ~ 5mm en 58mm)
-     *   - 169 (0xA9): setear nivel de correccion (M = 49, 0x31 = 15%)
-     *   - 180 (0xB4): almacenar data (4 bytes de header + data)
-     *   - 181 (0xB5): imprimir
-     *
-     * Documentacion Epson: TM-T88V Command Reference, pag ~250.
-     */
-    fun imprimirQr(out: OutputStream, qrToken: String) {
-        val data = qrToken.toByteArray(Charsets.UTF_8)
-        if (data.isEmpty()) return
-
-        // GS ( k  Function 165  pl  ph  cn  fn  n1  n2
-        // 4 bytes de parametros: cn=49 (0x31), fn=65 (0x41, modelo), n1=50 (0x32, modelo 2), n2=0
-        out.write(byteArrayOf(0x1D, 0x28, 0x6B, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00))
-
-        // GS ( k  Function 167  pl  ph  cn  fn  n
-        // cn=49, fn=67, n = tamano modulo (4)
-        out.write(byteArrayOf(0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x43, 0x04))
-
-        // GS ( k  Function 169  pl  ph  cn  fn  n
-        // cn=49, fn=69, n = nivel de correccion (49 = '1' = ~15% / Level M)
-        out.write(byteArrayOf(0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x45, 0x31))
-
-        // GS ( k  Function 180  pl  ph  cn  fn  data
-        // pL = (data.size + 3) & 0xFF, pH = (data.size + 3) >> 8
-        val pL = ((data.size + 3) and 0xFF).toByte()
-        val pH = (((data.size + 3) shr 8) and 0xFF).toByte()
-        out.write(byteArrayOf(0x1D, 0x28, 0x6B, pL, pH, 0x31, 0x50, 0x30))
-        out.write(data)
-
-        // GS ( k  Function 181  pl  ph  cn  fn  m
-        // m = 0 (imprimir)
-        out.write(byteArrayOf(0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x51, 0x30))
+        list.add("\n\n\n".toByteArray(Charsets.UTF_8))
+        list.add(DataForSendToPrinterPos80.selectCutPagerModerAndCutPager(66, 1))
+        return list
     }
 
     private val bluetoothAdapter: BluetoothAdapter?
@@ -290,4 +370,8 @@ class PrinterService(private val context: Context) {
             val manager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
             return manager?.adapter
         }
+
+    private companion object {
+        const val TAG = "CsaePrinter"
+    }
 }
