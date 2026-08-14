@@ -37,8 +37,8 @@ android {
         //   de `buscarComensal` (que usaba cache local).
         // - ConsumoRepository.kt: despues de un consumo OK, refresca el
         //   cache del comensal via el endpoint nuevo.
-        versionCode = 23
-        versionName = "0.9.8-f24-totem-pos-polish"
+        versionCode = 24
+        versionName = "0.9.9-f26-rut-errores"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
         // URL del API configurable por buildType.

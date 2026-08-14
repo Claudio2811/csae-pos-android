@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -79,7 +80,10 @@ fun RutInputField(
     val visualTransformation = remember(autoFormat) {
         if (autoFormat) RutVisualTransformation() else VisualTransformation.None
     }
-    val rutValido = remember(value) { isRutFormatValid(value) }
+    // **Sprint F26 (2026-08-14):** ahora valida formato + DV real con
+    // RutHelper. Antes solo validaba formato (isRutFormatValid), no DV.
+    val rutValido = remember(value) { cl.csae.pos.util.RutHelper.isValid(value) }
+    val rutError = remember(value) { cl.csae.pos.util.RutHelper.errorMessage(value) }
     val isReadOnly = readOnly || useCustomKeypad
 
     Column(modifier = modifier) {
@@ -127,16 +131,40 @@ fun RutInputField(
                 )
             },
             trailingIcon = {
-                if (rutValido && value.isNotEmpty()) {
+                if (value.isNotEmpty() && rutError == null) {
+                    // **Sprint F26 (2026-08-14):** check verde SOLO si formato
+                    // + DV son validos. Antes era solo formato.
                     Icon(
                         imageVector = Icons.Filled.CheckCircle,
-                        contentDescription = "RUT valido",
+                        contentDescription = "RUT valido (DV correcto)",
                         tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp),
+                    )
+                } else if (value.isNotEmpty() && rutError != null) {
+                    // **Sprint F26 (2026-08-14):** X rojo + mensaje si DV no coincide.
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = rutError,
+                        tint = MaterialTheme.colorScheme.error,
                         modifier = Modifier.size(24.dp),
                     )
                 }
             },
-            isError = isError,
+            isError = isError || rutError != null,
+            // **Sprint F26 (2026-08-14):** mostrar el mensaje de error
+            // debajo del input (en supportingText). Si el operador tipeo
+            // un DV incorrecto, ve "Digito verificador (DV) incorrecto.
+            // El DV correcto es '5'." sin tener que esperar a la respuesta
+            // del backend.
+            supportingText = {
+                if (rutError != null) {
+                    Text(
+                        text = rutError,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            },
             visualTransformation = visualTransformation,
             // Sprint F13 (2026-08-11): cambiamos KeyboardType.Number -> Text
             // para que el teclado del sistema muestre tambien la K del DV
