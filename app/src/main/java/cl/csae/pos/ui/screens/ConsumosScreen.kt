@@ -1,14 +1,20 @@
 package cl.csae.pos.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
+import androidx.compose.material.icons.filled.PhonelinkSetup
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.SearchOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -163,14 +169,31 @@ fun ConsumosScreen(
 
             if (dispositivoActual == null) {
                 // F20: bloquear la vista si no hay dispositivo.
+                // F23: empty state con icono circular tinted.
                 Box(
                     modifier = Modifier.fillMaxSize().padding(24.dp),
                     contentAlignment = Alignment.Center,
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Box(
+                            modifier = Modifier
+                                .size(80.dp)
+                                .clip(androidx.compose.foundation.shape.CircleShape)
+                                .background(MaterialTheme.colorScheme.surfaceVariant),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Filled.PhonelinkSetup,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(40.dp),
+                            )
+                        }
+                        Spacer(Modifier.height(16.dp))
                         Text(
                             "Sin dispositivo asignado",
                             style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                         Spacer(Modifier.height(8.dp))
@@ -179,9 +202,12 @@ fun ConsumosScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
                             textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(horizontal = 16.dp),
                         )
-                        Spacer(Modifier.height(16.dp))
-                        Button(onClick = onIrConfig) {
+                        Spacer(Modifier.height(20.dp))
+                        FilledTonalButton(onClick = onIrConfig) {
+                            Icon(Icons.Filled.PhonelinkSetup, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
                             Text("Ir a Configuracion")
                         }
                     }
@@ -269,15 +295,42 @@ fun ConsumosScreen(
                 }
 
                 if (consumos.isEmpty() && !loading) {
+                    // F23: empty state con icono + texto.
                     Box(
                         modifier = Modifier.fillMaxSize().padding(24.dp),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text(
-                            "No hay consumos en el rango seleccionado.",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                        )
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Box(
+                                modifier = Modifier
+                                    .size(80.dp)
+                                    .clip(androidx.compose.foundation.shape.CircleShape)
+                                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    Icons.Filled.SearchOff,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(40.dp),
+                                )
+                            }
+                            Spacer(Modifier.height(16.dp))
+                            Text(
+                                "Sin consumos en este rango",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                textAlign = TextAlign.Center,
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "Cuando el operador registre consumos, apareceran aqui.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                textAlign = TextAlign.Center,
+                            )
+                        }
                     }
                 } else {
                     LazyColumn(
@@ -355,19 +408,33 @@ private fun ConsumoRow(c: ConsumoListItemDto) {
             modifier = Modifier.fillMaxWidth().padding(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            // F23: icono de recibo a la izquierda.
+            Box(
+                modifier = Modifier.size(40.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ReceiptLong,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     "${c.comensalNombre} (${c.comensalRut})",
                     fontWeight = FontWeight.SemiBold,
+                    fontSize = 14.sp,
                 )
                 Text(
                     "${c.servicioNombre} - N° ${c.ticketNumero ?: "-"}",
                     style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
                 )
                 Text(
                     c.fechaConsumoUtc.take(19).replace("T", " "),
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                 )
             }
             Text(

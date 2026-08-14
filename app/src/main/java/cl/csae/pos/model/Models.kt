@@ -68,5 +68,12 @@ data class Ticket(
 data class Kpi(
     val label: String,
     val value: String,
-    val icono: String,         // emoji
+    /**
+     * F23: ahora es el nombre del icono Material en vez de un emoji.
+     * Antes era un String con un emoji (🎫💰👥) que se veia raro en
+     * Android y no era consistente entre devices. Ahora usamos iconos
+     * Material 3 (ConfirmationNumber, PointOfSale, Groups, Restaurant)
+     * via [androidx.compose.material.icons.Icons.Filled].
+     */
+    val icono: String,         // F23: nombre simbolico del icono Material
 )

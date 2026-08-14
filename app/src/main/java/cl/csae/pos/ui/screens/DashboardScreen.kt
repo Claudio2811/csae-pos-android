@@ -5,15 +5,23 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
+import androidx.compose.material.icons.filled.ConfirmationNumber
 import androidx.compose.material.icons.filled.ExitToApp
+import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.PhonelinkSetup
 import androidx.compose.material.icons.filled.PointOfSale
+import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cl.csae.pos.data.repository.TicketCacheRepository
@@ -68,10 +76,10 @@ fun DashboardScreen(
 
     val kpis = remember(tickets) {
         listOf(
-            Kpi("Tickets hoy",   tickets.size.toString(),                "🎫"),
-            Kpi("Monto total",   "$${ServiceLocator.ticketCache.montoTotalClp()}", "💰"),
-            Kpi("Comensales unicos", ServiceLocator.ticketCache.comensalesUnicos().toString(), "👥"),
-            Kpi("Servicios disponibles", ServiceLocator.catalogRepo.getCached()?.servicios?.size?.toString() ?: "-", "🍽"),
+            Kpi("Tickets hoy",          tickets.size.toString(),                "ConfirmationNumber"),
+            Kpi("Monto total",          "$${ServiceLocator.ticketCache.montoTotalClp()}", "PointOfSale"),
+            Kpi("Comensales unicos",    ServiceLocator.ticketCache.comensalesUnicos().toString(), "Groups"),
+            Kpi("Servicios disponibles", ServiceLocator.catalogRepo.getCached()?.servicios?.size?.toString() ?: "-", "Restaurant"),
         )
     }
 
@@ -241,22 +249,76 @@ fun DashboardScreen(
                             modifier = Modifier.fillMaxWidth(),
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                         ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                // Icono de recibo tinted.
+                                Box(
+                                    modifier = Modifier.size(40.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        Icons.AutoMirrored.Filled.ReceiptLong,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
+                                Spacer(Modifier.width(8.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        "${t.comensal.nombre} ${t.comensal.apellido ?: ""}".trim(),
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 14.sp,
+                                    )
+                                    Text(
+                                        "${t.servicio.nombre} - ${t.fechaHora}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
+                                    )
+                                }
                                 Text(
-                                    "${t.comensal.nombre} ${t.comensal.apellido ?: ""}".trim(),
-                                    fontWeight = FontWeight.SemiBold,
-                                )
-                                Text(
-                                    "${t.servicio.nombre} - $${t.servicio.precio}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                )
-                                Text(
-                                    t.fechaHora,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                    "$${t.servicio.precio}",
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontSize = 16.sp,
                                 )
                             }
                         }
+                    }
+                }
+            } else {
+                // F23: empty state con icono + texto cuando no hay tickets.
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    ),
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ReceiptLong,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                            modifier = Modifier.size(40.dp),
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Aun no hay tickets en este turno",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                            textAlign = TextAlign.Center,
+                        )
+                        Text(
+                            "Toca GENERAR TICKET para registrar el primer consumo del dia.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
                     }
                 }
             }
@@ -269,13 +331,17 @@ private fun KpiCard(
     kpi: Kpi,
     cardHeight: androidx.compose.ui.unit.Dp,
     valueFontSize: androidx.compose.ui.unit.TextUnit,
-    iconFontSize: androidx.compose.ui.unit.TextUnit,
+    @Suppress("UNUSED_PARAMETER") iconFontSize: androidx.compose.ui.unit.TextUnit,
 ) {
     // Fix dashboard KPI (2026-08-12): antes el layout era Column con el
     // icono arriba y value+label abajo (stacked vertical). En celular el
     // label se cortaba. Ahora es Row con icono a la izquierda y value+label
     // a la derecha (stacked), centrados verticalmente. Asi el label tiene
     // todo el ancho disponible a la derecha del icono y nunca se corta.
+    //
+    // F23 (2026-08-14): el icono ahora es un [ImageVector] Material 3
+    // (mapeado del nombre simbolico en `kpi.icono`) en vez de un emoji.
+    // Se ve mucho mas consistente y profesional.
     Card(
         modifier = Modifier.fillMaxWidth().height(cardHeight),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -286,8 +352,27 @@ private fun KpiCard(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            // Icono a la izquierda.
-            Text(kpi.icono, fontSize = iconFontSize)
+            // Icono Material 3 mapeado del nombre.
+            val icon: ImageVector = when (kpi.icono) {
+                "ConfirmationNumber" -> Icons.Filled.ConfirmationNumber
+                "PointOfSale" -> Icons.Filled.PointOfSale
+                "Groups" -> Icons.Filled.Groups
+                "Restaurant" -> Icons.Filled.Restaurant
+                "PhonelinkSetup" -> Icons.Filled.PhonelinkSetup
+                "Receipt" -> Icons.AutoMirrored.Filled.ReceiptLong
+                else -> Icons.Filled.Receipt
+            }
+            Box(
+                modifier = Modifier.size(40.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(28.dp),
+                )
+            }
             // Value + label a la derecha, stacked.
             Column(modifier = Modifier.weight(1f)) {
                 Text(
