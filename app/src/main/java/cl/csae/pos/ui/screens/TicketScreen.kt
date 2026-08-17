@@ -200,7 +200,6 @@ fun TicketScreen(
         if (esKiosko) return@LaunchedEffect
         val autoOn = ServiceLocator.authStore.getAutoImprimirTickets()
         if (!autoOn) return@LaunchedEffect
-        val mac = ServiceLocator.authStore.getImpresoraMac() ?: return@LaunchedEffect
         // Espera corta para que se vea el "Listo!" y el QR antes de imprimir.
         delay(400)
         val devices = try {
@@ -209,10 +208,37 @@ fun TicketScreen(
             android.util.Log.w("CsaeTicket", "auto-imprimir: listarEmparejados sin permiso BT: ${e.message}")
             return@LaunchedEffect
         }
-        val device = devices.firstOrNull { it.address == mac }
+        if (devices.isEmpty()) {
+            // Sin devices emparejados, no hay nada que hacer. El operador
+            // vera el boton "Imprimir" que abre el dialog (manual).
+            android.util.Log.d("CsaeTicket", "auto-imprimir: 0 devices emparejados, saliendo")
+            return@LaunchedEffect
+        }
+        // Resolver la MAC destino:
+        //   - Si hay MAC guardada, usar esa.
+        //   - Si NO hay MAC guardada PERO hay 1 unico device emparejado,
+        //     auto-seleccionar ese (asi no hay catch-22 de "tengo que
+        //     imprimir manualmente 1 vez para que la MAC se guarde").
+        //   - Si NO hay MAC guardada y hay >1 devices, no se puede decidir
+        //     -> salir (operador usa el dialog manual, la MAC se guarda
+        //     al elegir y queda para la proxima).
+        val savedMac = ServiceLocator.authStore.getImpresoraMac()
+        val targetMac: String = when {
+            savedMac != null -> savedMac
+            devices.size == 1 -> {
+                val unico = devices[0]
+                android.util.Log.d("CsaeTicket", "auto-imprimir: sin MAC guardada, auto-selecciono unico device ${unico.address}")
+                unico.address
+            }
+            else -> {
+                android.util.Log.d("CsaeTicket", "auto-imprimir: sin MAC guardada y ${devices.size} devices, saliendo (operador debe elegir)")
+                return@LaunchedEffect
+            }
+        }
+        val device = devices.firstOrNull { it.address == targetMac }
         if (device == null) {
             // La MAC guardada ya no esta emparejada. Fallback silencioso.
-            android.util.Log.w("CsaeTicket", "auto-imprimir: MAC $mac no esta en emparejados (${devices.size} disponibles)")
+            android.util.Log.w("CsaeTicket", "auto-imprimir: MAC $targetMac no esta en emparejados (${devices.size} disponibles)")
             snackbar.showSnackbar(
                 "Impresora guardada no emparejada. Apreta Imprimir para elegir otra.",
             )
