@@ -1,6 +1,7 @@
 package cl.csae.pos.data.prefs
 
 import android.content.Context
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -57,6 +58,14 @@ class AuthStore(private val context: Context) {
      */
     val impresoraMac: Flow<String?> = context.authDataStore.data.map { it[KEY_IMPRESORA_MAC] }
     val impresoraNombre: Flow<String?> = context.authDataStore.data.map { it[KEY_IMPRESORA_NOMBRE] }
+    /**
+     * **F55 (2026-08-17):** Si esta en true, el TicketScreen auto-imprime
+     * el ticket al mostrarse usando la MAC persistida en [impresoraMac].
+     * Si no hay MAC guardada o la impresora no responde, no rompe: el
+     * operador puede seguir apretando "Imprimir" manualmente.
+     * Default: false (comportamiento manual original).
+     */
+    val autoImprimirTickets: Flow<Boolean> = context.authDataStore.data.map { it[KEY_AUTO_IMPRIMIR] ?: false }
 
     // ===== F16: Tema del casino actual =====
     val casinoId: Flow<String?> = context.authDataStore.data.map { it[KEY_CASINO_ID] }
@@ -82,6 +91,12 @@ class AuthStore(private val context: Context) {
     suspend fun getModoPreferido(): String? = context.authDataStore.data.first()[KEY_MODO_PREFERIDO]
 
     suspend fun getImpresoraMac(): String? = context.authDataStore.data.first()[KEY_IMPRESORA_MAC]
+
+    /**
+     * **F55 (2026-08-17):** lee el flag de auto-imprimir. Snapshot actual
+     * (no reactivo). Llamado desde el LaunchedEffect del TicketScreen.
+     */
+    suspend fun getAutoImprimirTickets(): Boolean = context.authDataStore.data.first()[KEY_AUTO_IMPRIMIR] ?: false
 
     /**
      * Devuelve el versionCode de la app que vio la sesion actual. 0 si es la
@@ -176,6 +191,16 @@ class AuthStore(private val context: Context) {
     }
 
     /**
+     * **F55 (2026-08-17):** persiste el flag de auto-imprimir. Llamado desde
+     * el Switch en ConfiguracionScreen. Default false (manual).
+     */
+    suspend fun setAutoImprimirTickets(enabled: Boolean) {
+        context.authDataStore.edit { prefs ->
+            prefs[KEY_AUTO_IMPRIMIR] = enabled
+        }
+    }
+
+    /**
      * Sprint 3.3: persistir el versionCode actual para que la proxima vez
      * que arranque la app sepamos que ya "vimos" esta version.
      */
@@ -238,6 +263,8 @@ class AuthStore(private val context: Context) {
         val KEY_MODO_PREFERIDO = stringPreferencesKey("modo_preferido")
         val KEY_IMPRESORA_MAC = stringPreferencesKey("impresora_mac")
         val KEY_IMPRESORA_NOMBRE = stringPreferencesKey("impresora_nombre")
+        // F55: toggle de auto-impresion del ticket.
+        val KEY_AUTO_IMPRIMIR = booleanPreferencesKey("auto_imprimir_tickets")
         val KEY_VERSION_CODE = intPreferencesKey("last_seen_version_code")
         // F16
         val KEY_CASINO_ID = stringPreferencesKey("casino_id")

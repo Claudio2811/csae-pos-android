@@ -83,6 +83,9 @@ fun ConfiguracionScreen(
     var modoPreferido by remember { mutableStateOf<String?>(null) }
     var macImpresora by remember { mutableStateOf<String?>(null) }
     var nombreImpresora by remember { mutableStateOf<String?>(null) }
+    // F55: toggle de auto-imprimir tickets al generarlos. Si esta on y hay
+    // una MAC guardada, el TicketScreen dispara la impresion automaticamente.
+    var autoImprimir by remember { mutableStateOf(false) }
     var showPrinterDialog by remember { mutableStateOf(false) }
     var printStatus by remember { mutableStateOf<String?>(null) }
     var printing by remember { mutableStateOf(false) }
@@ -109,10 +112,11 @@ fun ConfiguracionScreen(
         }
     }
 
-    // Cargar estado inicial (modo preferido + MAC impresora).
+    // Cargar estado inicial (modo preferido + MAC impresora + auto-imprimir).
     LaunchedEffect(Unit) {
         modoPreferido = ServiceLocator.authStore.getModoPreferido()
         macImpresora = ServiceLocator.authStore.getImpresoraMac()
+        autoImprimir = ServiceLocator.authStore.getAutoImprimirTickets()
     }
 
     // F19: cada vez que se abre el dialog, recarga la lista de dispositivos
@@ -197,9 +201,30 @@ fun ConfiguracionScreen(
     fun olvidarImpresora() {
         macImpresora = null
         nombreImpresora = null
+        // F55: al olvidar la impresora, tambien apagamos auto-imprimir
+        // (no tiene sentido auto-imprimir sin impresora).
+        autoImprimir = false
         scope.launch {
             ServiceLocator.authStore.setImpresora(null, null)
+            ServiceLocator.authStore.setAutoImprimirTickets(false)
             snackbar.showSnackbar("Impresora olvidada. Selecciona otra cuando quieras.")
+        }
+    }
+
+    /**
+     * F55: toggle el flag de auto-imprimir tickets. Persiste en DataStore
+     * para que el TicketScreen lo lea via [AuthStore.getAutoImprimirTickets].
+     */
+    fun setAutoImprimir(enabled: Boolean) {
+        autoImprimir = enabled
+        scope.launch {
+            ServiceLocator.authStore.setAutoImprimirTickets(enabled)
+            val msg = if (enabled) {
+                "Auto-imprimir ON: el proximo ticket saldra directo a ${nombreImpresora ?: "la impresora"}."
+            } else {
+                "Auto-imprimir OFF. Tendras que apretar Imprimir manualmente."
+            }
+            snackbar.showSnackbar(msg)
         }
     }
 
@@ -505,6 +530,28 @@ fun ConfiguracionScreen(
                         Spacer(Modifier.width(8.dp))
                         Text("Olvidar impresora")
                     }
+                    // F55: toggle de auto-imprimir tickets. Solo aparece si
+                    // hay una MAC seleccionada (no se puede auto-imprimir sin
+                    // impresora). El operador lo prende y desde ahi en
+                    // adelante cada ticket generado sale directo a la
+                    // impresora. Si falla, fallback silencioso: el operador
+                    // sigue pudiendo usar el boton Imprimir manual.
+                    Spacer(Modifier.height(8.dp))
+                    HorizontalDivider()
+                    Spacer(Modifier.height(8.dp))
+                    ConfigRow(
+                        icon = Icons.Filled.Print,
+                        title = "Auto-imprimir tickets",
+                        subtitle = "Al generar un ticket, se imprime solo en $nombreImpresora. " +
+                            "Si falla, podes reimprimir manualmente.",
+                        trailing = {
+                            Switch(
+                                checked = autoImprimir,
+                                onCheckedChange = { setAutoImprimir(it) },
+                            )
+                        },
+                        onClick = { setAutoImprimir(!autoImprimir) },
+                    )
                 }
             }
 

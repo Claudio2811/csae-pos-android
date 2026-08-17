@@ -93,6 +93,135 @@ fun TicketScreen(
         ServiceLocator.ticketCache.agregar(ticket)
     }
 
+    /**
+     * **F55 (2026-08-17):** helper local que encapsula la logica de imprimir
+     * en un device Bluetooth especifico. Usado por:
+     *   - el `onSelect` del PrinterPickerDialog (impresion manual).
+     *   - el `LaunchedEffect` de auto-impresion (cuando el toggle esta ON).
+     * El unico efecto visible al operador es el snackbar + actualizacion de
+     * `printing`. No navega, no rompe el flujo: si falla, snackbar y el
+     * operador puede reintentar apretando Imprimir.
+     */
+    fun imprimirEnDevice(device: BluetoothDevice, silencioso: Boolean) {
+        if (printing) return
+        printing = true
+        scope.launch {
+            // F4 (2026-08-13): con el SDK vendor hay que conectar
+            // ANTES de imprimir. Conectar es idempotente: si ya esta
+            // conectado, retorna success.
+            val qrToken = ticket.qrToken
+                ?: "CSAE-${ticket.numero}-${ticket.comensal.rut}"
+            // Regeneramos el QR para el PDF con sizePx fijo.
+            val qrBitmap = ServiceLocator.printerService.generarQrBitmap(qrToken, sizePx = 512)
+            val conn = ServiceLocator.printerService.connectBtPort(device.address)
+            if (conn.isFailure) {
+                printing = false
+                val err = conn.exceptionOrNull()?.message ?: "desconocido"
+                if (silencioso) {
+                    // Auto-impresion: no spamear snackbars, pero el operador
+                    // puede ver que `printing` vuelve a false.
+                    android.util.Log.w("CsaeTicket", "auto-imprimir: connect fallo a ${device.address}: $err")
+                    snackbar.showSnackbar("Auto-imprimir fallo: $err. Apreta Imprimir manualmente.")
+                } else {
+                    snackbar.showSnackbar("No se pudo conectar a la impresora: $err")
+                }
+                return@launch
+            }
+            val r = ServiceLocator.printerService.imprimirTicket(
+                ticket = ticket,
+                qrToken = qrToken,
+            )
+            printing = false
+            r.onSuccess {
+                // Marcamos el ticket como impreso SOLO si la impresion
+                // fisica salio OK. Esto evita estados inconsistentes.
+                ticket.ticketId?.let { id ->
+                    ServiceLocator.consumoRepo.marcarImpreso(id, device.address)
+                }
+                // F55: persistir la MAC para que el proximo ticket pueda
+                // auto-imprimir en este mismo device. Si falla, no es
+                // bloqueante: el operador sigue pudiendo usar el dialog.
+                val deviceNombre = try { device.name } catch (_: SecurityException) { null }
+                ServiceLocator.authStore.setImpresora(device.address, deviceNombre)
+                snackbar.showSnackbar("Impreso OK en ${deviceNombre ?: device.address}.")
+            }.onFailure { err ->
+                // Sprint 3.2.1: fallback a PDF cuando la impresion
+                // fisica falla. Genera un PDF del ticket con el QR
+                // para que el operador pueda abrirlo / compartirlo.
+                val pdfFile = try {
+                    TicketPdfGenerator.generarPdf(
+                        context = context,
+                        ticket = ticket,
+                        qrBitmap = qrBitmap,
+                    )
+                } catch (e: Exception) {
+                    null
+                }
+                if (pdfFile != null) {
+                    pdfFallbackPath = pdfFile.absolutePath
+                    snackbar.showSnackbar(
+                        "Impresion fallo. PDF guardado en: ${pdfFile.name}",
+                    )
+                } else {
+                    snackbar.showSnackbar(
+                        "Impresion fallo: ${err.message}. No se pudo generar PDF.",
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * **F55 (2026-08-17):** auto-imprimir al mostrar el ticket.
+     *
+     * Trigger: combinacion unica de (ticket.numero + esKiosko), asi NO se
+     * dispara dos veces para el mismo ticket, y se re-evalua solo si cambia
+     * el modo (kiosko vs operador). El switch de auto-imprimir se lee
+     * snapshot (first()) porque solo nos importa el valor al entrar a la
+     * pantalla, no que se actualice en vivo.
+     *
+     * Logica:
+     *   1. Lee `autoImprimirTickets` de DataStore. Si false -> no hace nada.
+     *   2. Lee `impresoraMac` de DataStore. Si null -> no hace nada.
+     *   3. Espera 400ms (asi la UI muestra "Listo!" antes de imprimir).
+     *   4. Busca el device emparejado por MAC. Si no esta emparejado -> no
+     *      hace nada (silencioso, el operador puede elegir manualmente).
+     *   5. Llama `imprimirEnDevice(device, silencioso = true)`.
+     *
+     * Si el operador aprieta "Nuevo" antes de que termine, el
+     * LaunchedEffect se cancela con el composable y el flow sigue en
+     * background (no problem, imprimir es fire-and-forget).
+     */
+    LaunchedEffect(ticket.numero, esKiosko) {
+        // No aplicar auto-imprimir en modo kiosko: el operador no esta
+        // mirando, y la pantalla vuelve sola al POS a los 10s. Si
+        // quisieras auto-imprimir en kiosko, hay que cambiar la UX
+        // (kiosko imprime silenciosamente, operador confirma con boton).
+        if (esKiosko) return@LaunchedEffect
+        val autoOn = ServiceLocator.authStore.getAutoImprimirTickets()
+        if (!autoOn) return@LaunchedEffect
+        val mac = ServiceLocator.authStore.getImpresoraMac() ?: return@LaunchedEffect
+        // Espera corta para que se vea el "Listo!" y el QR antes de imprimir.
+        delay(400)
+        val devices = try {
+            ServiceLocator.printerService.listarEmparejados()
+        } catch (e: SecurityException) {
+            android.util.Log.w("CsaeTicket", "auto-imprimir: listarEmparejados sin permiso BT: ${e.message}")
+            return@LaunchedEffect
+        }
+        val device = devices.firstOrNull { it.address == mac }
+        if (device == null) {
+            // La MAC guardada ya no esta emparejada. Fallback silencioso.
+            android.util.Log.w("CsaeTicket", "auto-imprimir: MAC $mac no esta en emparejados (${devices.size} disponibles)")
+            snackbar.showSnackbar(
+                "Impresora guardada no emparejada. Apreta Imprimir para elegir otra.",
+            )
+            return@LaunchedEffect
+        }
+        android.util.Log.d("CsaeTicket", "auto-imprimir: disparando contra ${device.address}")
+        imprimirEnDevice(device, silencioso = true)
+    }
+
     // Launcher de permiso BLUETOOTH_CONNECT (Android 12+)
     val btPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
@@ -349,58 +478,9 @@ fun TicketScreen(
             onDismiss = { showPrinterDialog = false },
             onSelect = { device ->
                 showPrinterDialog = false
-                printing = true
-                scope.launch {
-                    // F4 (2026-08-13): con el SDK vendor hay que conectar
-                    // ANTES de imprimir. Conectar es idempotente: si ya esta
-                    // conectado, retorna success.
-                    val qrToken = ticket.qrToken
-                        ?: "CSAE-${ticket.numero}-${ticket.comensal.rut}"
-                    // Regeneramos el QR para el PDF con sizePx fijo.
-                    val qrBitmap = ServiceLocator.printerService.generarQrBitmap(qrToken, sizePx = 512)
-                    val conn = ServiceLocator.printerService.connectBtPort(device.address)
-                    if (conn.isFailure) {
-                        printing = false
-                        snackbar.showSnackbar("No se pudo conectar a la impresora: ${conn.exceptionOrNull()?.message}")
-                        return@launch
-                    }
-                    val r = ServiceLocator.printerService.imprimirTicket(
-                        ticket = ticket,
-                        qrToken = qrToken,
-                    )
-                    printing = false
-                    r.onSuccess {
-                        // Marcamos el ticket como impreso SOLO si la impresion
-                        // fisica salio OK. Esto evita estados inconsistentes.
-                        ticket.ticketId?.let { id ->
-                            ServiceLocator.consumoRepo.marcarImpreso(id, device.address)
-                        }
-                        snackbar.showSnackbar("Impreso OK en ${device.name ?: device.address}.")
-                    }.onFailure { err ->
-                        // Sprint 3.2.1: fallback a PDF cuando la impresion
-                        // fisica falla. Genera un PDF del ticket con el QR
-                        // para que el operador pueda abrirlo / compartirlo.
-                        val pdfFile = try {
-                            TicketPdfGenerator.generarPdf(
-                                context = context,
-                                ticket = ticket,
-                                qrBitmap = qrBitmap,
-                            )
-                        } catch (e: Exception) {
-                            null
-                        }
-                        if (pdfFile != null) {
-                            pdfFallbackPath = pdfFile.absolutePath
-                            snackbar.showSnackbar(
-                                "Impresion fallo. PDF guardado en: ${pdfFile.name}",
-                            )
-                        } else {
-                            snackbar.showSnackbar(
-                                "Impresion fallo: ${err.message}. No se pudo generar PDF.",
-                            )
-                        }
-                    }
-                }
+                // F55: delega a la funcion helper para que la logica este
+                // en un solo lugar (manual y auto-imprimir usan el mismo path).
+                imprimirEnDevice(device, silencioso = false)
             },
         )
     }
