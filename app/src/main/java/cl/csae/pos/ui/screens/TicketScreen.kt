@@ -193,11 +193,15 @@ fun TicketScreen(
      * background (no problem, imprimir es fire-and-forget).
      */
     LaunchedEffect(ticket.numero, esKiosko) {
-        // No aplicar auto-imprimir en modo kiosko: el operador no esta
-        // mirando, y la pantalla vuelve sola al POS a los 10s. Si
-        // quisieras auto-imprimir en kiosko, hay que cambiar la UX
-        // (kiosko imprime silenciosamente, operador confirma con boton).
-        if (esKiosko) return@LaunchedEffect
+        // F55c (2026-08-17): quitar la exclusion del modo kiosko. El user
+        // reporto que queria auto-imprimir tambien en Totem (kiosko
+        // self-service). El comportamiento en kiosko ahora es: el comensal
+        // ve "Listo!" + QR + el auto-print sale en paralelo. El timer
+        // de 10s sigue corriendo y vuelve al TotemScreen, pero si el
+        // print termino antes, el operador puede verificar.
+        //
+        // Si en el futuro se quiere volver a excluir kiosko, ver el
+        // historial git (commit 7a171cc) que es donde se agrego.
         val autoOn = ServiceLocator.authStore.getAutoImprimirTickets()
         if (!autoOn) return@LaunchedEffect
         // Espera corta para que se vea el "Listo!" y el QR antes de imprimir.
