@@ -77,10 +77,28 @@ fun ModeSelectScreen(
             ),
         )
         when (usuario?.rol) {
+            // F48 (2026-08-16): agregar AdminRestaurante (=7) y EncargadoSucursal
+            // (=8). El seed dev de admin@demo.csae sigue con rol=1=AdminCasino
+            // ([Obsolete]) por compatibilidad, pero los users reales del casino
+            // piloto ya usan los nuevos roles. Si no incluimos estos aca, el
+            // user entra al sistema pero no ve ningun modo.
             "OperadorPos" -> allModos.filter { it.key == "POS" }
             "Garzon" -> allModos.filter { it.key == "GARZON" }
-            "AdminCasino", "SupervisorCasino", "SuperAdmin" -> allModos
-            else -> emptyList()
+            "AdminCasino", "SupervisorCasino", "SuperAdmin",
+            "AdminRestaurante", "EncargadoSucursal" -> allModos
+            // Fallback defensivo: si el rol no matchea NINGUNO de los conocidos
+            // (ej: data vieja en DataStore, o un rol nuevo del backend que
+            // olvidamos agregar aca), mostrar TODOS los modos. Mejor mostrar
+            // de mas que dejar al user encerrado en la pantalla de seleccion.
+            // El operador con el rol "equivocado" no va a poder hacer nada
+            // de todos modos (los endpoints del backend van a rechazar).
+            else -> {
+                android.util.Log.w(
+                    "CsaeModeSelect",
+                    "rol '${usuario?.rol}' no reconocido, mostrando todos los modos como fallback",
+                )
+                allModos
+            }
         }
     }
 
