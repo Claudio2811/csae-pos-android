@@ -17,6 +17,10 @@ data class UsuarioPos(
     val displayName: String,
     val rol: String,           // "OperadorPOS" o "AdminCasino"
     val restauranteId: String?, // null para AdminEmpresa (no es de un casino especifico)
+    // F3: sucursal activa del OperadorPos. null = "casino completo" (sin
+    // sucursal o user eligio ver todo). El backend lo popula en el JWT y
+    // llega via /auth/me o /auth/cambiar-sucursal.
+    val sucursalId: String? = null,
     // Compat: el codigo mock usaba `username`. Lo dejamos mapeado.
     val username: String = email,
 )
@@ -64,5 +68,12 @@ data class Ticket(
 data class Kpi(
     val label: String,
     val value: String,
-    val icono: String,         // emoji
+    /**
+     * F23: ahora es el nombre del icono Material en vez de un emoji.
+     * Antes era un String con un emoji (🎫💰👥) que se veia raro en
+     * Android y no era consistente entre devices. Ahora usamos iconos
+     * Material 3 (ConfirmationNumber, PointOfSale, Groups, Restaurant)
+     * via [androidx.compose.material.icons.Icons.Filled].
+     */
+    val icono: String,         // F23: nombre simbolico del icono Material
 )

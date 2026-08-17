@@ -1,24 +1,29 @@
 package cl.csae.pos.ui.screens
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Badge
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Restaurant
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SearchOff
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cl.csae.pos.di.ServiceLocator
@@ -29,24 +34,22 @@ import cl.csae.pos.model.UsuarioPos
 import cl.csae.pos.ui.components.CambiarModoTopBar
 import cl.csae.pos.ui.components.NumericKeypad
 import cl.csae.pos.ui.components.RutInputField
+import cl.csae.pos.ui.components.normalizeRutInput
 import kotlinx.coroutines.launch
 
 /**
- * Pantalla principal del POS. Sprint 3.1.2: contra la API real.
- * Sprint 3.2: teclado numerico en RUT + menu inferior con Consumos / Config.
- * Sprint 3.2.1: RUTInputField con auto-formato + boton K, top bar con
- * "Cambiar modo" hacia mode_select.
- * Sprint 3.3 (fix UX):
- * - NumericKeypad en `bottomBar` del Scaffold (panel fijo abajo).
- * - Todo el contenido (RUT, comensal, servicios, boton GENERAR) scrolleable.
- * - Navegacion a Consumos / Config movida a la top bar (iconos).
+ * Pantalla principal del POS.
  *
- * Flujo:
- *   1. Operador ingresa RUT del comensal (teclado en pantalla del bottomBar).
- *   2. La app busca en el catalog cacheado (descargado al login).
- *   3. Operador selecciona servicio habilitado para ese comensal.
- *   4. Boton "Generar ticket" -> `POST /api/v1/pos/consumos` con `IdempotencyKey`.
- *   5. Navega a TicketScreen con el ticket devuelto.
+ * F24 (2026-08-14): UI Polish v2.
+ *   - Patron consistente con TotemScreen F24: paso 1 RUT, paso 2 comensal,
+ *     paso 3 servicio + generar.
+ *   - Card de comensal con avatar circular + nombre + RUT + empresa.
+ *   - Card de servicio con icono circular tinted + nombre + tipo + precio.
+ *   - Servicio seleccionado tiene border + check icon.
+ *   - Servicios ya consumidos con alpha 0.4 + badge.
+ *   - Boton "Generar ticket" Filled prominente.
+ *   - Banner de error en errorContainer con icono.
+ *   - Scroll vertical para que el keypad del bottom no tape el contenido.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -62,8 +65,13 @@ fun POSScreen(
     var servicioSeleccionado by remember { mutableStateOf<Servicio?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(false) }
-    val focusRut = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
+
+    val sucursalId by ServiceLocator.authStore.sucursalId.collectAsState(initial = null)
+    val sucursales by ServiceLocator.authRepo.sucursalesDisponibles.collectAsState()
+    val sucursalActualNombre = remember(sucursalId, sucursales) {
+        sucursales.firstOrNull { it.id == sucursalId }?.nombre ?: "Casino completo"
+    }
 
     fun buscar() {
         if (rut.isBlank()) {
@@ -75,7 +83,6 @@ fun POSScreen(
         comensal = null
         servicioSeleccionado = null
         error = null
-        // Si no hay catalog en cache, intentar bajarlo.
         if (ServiceLocator.catalogRepo.getCached() == null) {
             scope.launch {
                 val r = ServiceLocator.catalogRepo.refresh()
@@ -83,14 +90,27 @@ fun POSScreen(
             }
             return
         }
-        val c = ServiceLocator.catalogRepo.buscarComensal(rut)
-        when {
-            c == null -> error = "No se encontro comensal con RUT $rut en este casino."
-            c.servicios.isEmpty() -> {
-                comensal = c
-                error = "El comensal no tiene servicios habilitados."
+        scope.launch {
+            val r = ServiceLocator.catalogRepo.buscarComensalServiciosFrescos(rut)
+            r.onSuccess { c ->
+                when {
+                    c.servicios.isEmpty() -> {
+                        comensal = c
+                        error = "El comensal no tiene servicios habilitados."
+                    }
+                    c.servicios.all { it.yaConsumido } -> {
+                        comensal = c
+                        error = "Este comensal ya consumio todos sus servicios hoy. Vuelve manana."
+                    }
+                    else -> {
+                        comensal = c
+                        servicioSeleccionado = null
+                        error = null
+                    }
+                }
+            }.onFailure {
+                error = it.message ?: "No se encontro comensal con RUT $rut."
             }
-            else -> comensal = c
         }
     }
 
@@ -115,10 +135,6 @@ fun POSScreen(
                 comensal = null
                 servicioSeleccionado = null
                 rut = ""
-                // Sprint F14 (2026-08-11): guardar el ticket en el cache ANTES de
-                // navegar. Antes esto se hacia en el LaunchedEffect del TicketScreen,
-                // pero el TicketScreen no se renderizaba si el ticket no estaba en
-                // el cache (pantalla en blanco, race condition en AppNavHost).
                 ServiceLocator.ticketCache.agregar(t)
                 onTicketGenerado(t)
             }.onFailure { e ->
@@ -131,29 +147,20 @@ fun POSScreen(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             CambiarModoTopBar(
-                title = "POS - Generar Ticket",
-                subtitle = "Operador: ${usuario.displayName}",
+                title = "POS - Generar ticket",
+                subtitle = "Operador: ${usuario.displayName}  -  Sucursal: $sucursalActualNombre",
                 onCambiarModo = onCambiarModo,
                 actions = {
-                    // Sprint 3.3: navegacion movida del NavigationBar a la top bar.
                     IconButton(onClick = onIrConsumos) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.List,
-                            contentDescription = "Consumos",
-                        )
+                        Icon(Icons.AutoMirrored.Filled.List, contentDescription = "Consumos")
                     }
                     IconButton(onClick = onIrConfig) {
-                        Icon(
-                            imageVector = Icons.Filled.Settings,
-                            contentDescription = "Configuracion",
-                        )
+                        Icon(Icons.Filled.Settings, contentDescription = "Configuracion")
                     }
                 },
             )
         },
         bottomBar = {
-            // Panel fijo abajo: keypad full-width. NO es scrolleable.
-            // Solo activo cuando no estamos cargando/generando.
             Surface(
                 color = MaterialTheme.colorScheme.surface,
                 tonalElevation = 8.dp,
@@ -162,7 +169,7 @@ fun POSScreen(
                 Box(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
                     NumericKeypad(
                         onKeyPress = { ch ->
-                            rut = cl.csae.pos.ui.components.normalizeRutInput(rut + ch)
+                            rut = normalizeRutInput(rut + ch)
                         },
                         onBackspace = {
                             if (rut.isNotEmpty()) rut = rut.dropLast(1)
@@ -178,14 +185,16 @@ fun POSScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp),
+                .padding(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            // Paso 1: RUT (sin keypad embebido; el keypad esta en el bottomBar).
-            Text("1. RUT del comensal", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            // Sprint F13 (2026-08-11): el field ya tenia auto-formato + K via
-            // RutInputField. La longitud maxima ya la aplica normalizeRutInput
-            // (9 chars canonicos) y el placeholder 12 cuenta los puntos+guion.
+            // Paso 1: RUT.
+            PasoHeader(
+                numero = 1,
+                titulo = "RUT del comensal",
+                icono = Icons.Filled.Badge,
+                subtitulo = "Usa el teclado de abajo",
+            )
             RutInputField(
                 value = rut,
                 onValueChange = {
@@ -197,67 +206,70 @@ fun POSScreen(
                 enabled = !loading,
                 isError = error != null,
                 useCustomKeypad = false,
-                modifier = Modifier.fillMaxWidth().focusRequester(focusRut),
+                readOnly = true,
+                modifier = Modifier.fillMaxWidth(),
             )
             Button(
                 onClick = { buscar() },
                 enabled = !loading,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("Buscar comensal")
+                Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Buscar comensal", fontSize = 16.sp, fontWeight = FontWeight.Medium)
             }
 
+            // Banner de error.
             error?.let { msg ->
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                Surface(
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
                     Row(
-                        modifier = Modifier.padding(12.dp),
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Icon(Icons.Filled.Error, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
+                        Icon(
+                            Icons.Filled.SearchOff,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.size(20.dp),
+                        )
                         Spacer(Modifier.width(8.dp))
                         Text(
                             msg,
                             color = MaterialTheme.colorScheme.onErrorContainer,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f),
                         )
                     }
                 }
             }
 
-            // Paso 2: comensal encontrado
+            // Paso 2: comensal encontrado.
             comensal?.let { c ->
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Filled.Person, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                "${c.nombre} ${c.apellido ?: ""}".trim(),
-                                fontSize = 22.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            )
-                        }
-                        Text("RUT: ${c.rut}", color = MaterialTheme.colorScheme.onPrimaryContainer)
-                        Text("Empresa: ${c.empresa}", color = MaterialTheme.colorScheme.onPrimaryContainer)
-                    }
-                }
+                PasoHeader(
+                    numero = 2,
+                    titulo = "Comensal encontrado",
+                    icono = Icons.Filled.Person,
+                    subtitulo = "Verifica que sea la persona correcta",
+                )
+                ComensalCardPOS(c)
 
+                // Paso 3: servicios.
                 if (c.servicios.isNotEmpty()) {
-                    // Paso 3: servicio
-                    Text(
-                        "2. Servicio a entregar",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
+                    PasoHeader(
+                        numero = 3,
+                        titulo = "Servicio a entregar",
+                        icono = Icons.Filled.Restaurant,
+                        subtitulo = "Selecciona uno (los tachados ya fueron consumidos)",
                     )
                     c.servicios.forEach { s ->
-                        ServicioCard(
+                        ServicioCardPOS(
                             servicio = s,
                             seleccionado = servicioSeleccionado?.id == s.id,
                             onClick = {
-                                // F18.2: bloquear click si ya fue consumido hoy.
                                 if (!s.yaConsumido) {
                                     servicioSeleccionado = s
                                     error = null
@@ -266,88 +278,232 @@ fun POSScreen(
                         )
                     }
 
+                    Spacer(Modifier.height(8.dp))
+
                     Button(
                         onClick = { generar() },
                         enabled = servicioSeleccionado != null && !loading,
                         modifier = Modifier.fillMaxWidth().height(64.dp),
+                        shape = MaterialTheme.shapes.medium,
                     ) {
                         if (loading) {
                             CircularProgressIndicator(
-                                modifier = Modifier.size(24.dp),
+                                modifier = Modifier.size(22.dp),
                                 color = MaterialTheme.colorScheme.onPrimary,
-                                strokeWidth = 2.dp,
+                                strokeWidth = 2.5.dp,
                             )
-                            Spacer(Modifier.width(8.dp))
-                            Text("Generando...", fontSize = 18.sp)
+                            Spacer(Modifier.width(12.dp))
+                            Text("Generando...", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                         } else {
-                            Icon(Icons.Filled.Restaurant, contentDescription = null, modifier = Modifier.size(28.dp))
+                            Icon(Icons.Filled.Restaurant, contentDescription = null, modifier = Modifier.size(24.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text("GENERAR TICKET", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                            Text("GENERAR TICKET", fontSize = 18.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
             }
 
-            // Padding inferior para que el contenido no quede pegado al
-            // keypad cuando se hace scroll hasta el final.
             Spacer(Modifier.height(8.dp))
         }
     }
-
-    // No usamos focusRut.requestFocus() porque el RUT se tipea con el keypad
-    // del bottomBar (no con el teclado nativo). Mantengo el FocusRequester
-    // en el codigo por si en el futuro se quiere saltar a teclado nativo.
-    @Suppress("UNUSED_EXPRESSION") focusRut
 }
 
+/**
+ * F24: header de cada paso del flujo. Numero circular tinted + titulo +
+ * subtitulo. Patron consistente con el resto de la app.
+ */
 @Composable
-private fun ServicioCard(servicio: Servicio, seleccionado: Boolean, onClick: () -> Unit) {
-    // F18.2: si el servicio ya fue consumido hoy, el card se ve gris y
-    // no responde al click. La regla unicoPorDia del backend (ConsumoService)
-    // rechaza con 409 igual — esto es solo feedback visual.
+private fun PasoHeader(
+    numero: Int,
+    titulo: String,
+    icono: androidx.compose.ui.graphics.vector.ImageVector,
+    subtitulo: String,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primary),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                "$numero",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onPrimary,
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                titulo,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+            Text(
+                subtitulo,
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+            )
+        }
+    }
+}
+
+/**
+ * F24: card de preview del comensal con avatar circular + info.
+ */
+@Composable
+private fun ComensalCardPOS(c: Comensal) {
+    ElevatedCard(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+        ),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    c.nombre.firstOrNull()?.uppercase() ?: "?",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "${c.nombre} ${c.apellido ?: ""}".trim(),
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    maxLines = 1,
+                )
+                Text(
+                    "RUT ${c.rut}",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                )
+                if (c.empresa.isNotEmpty()) {
+                    Text(
+                        c.empresa,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f),
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * F24: card de servicio con icono circular tinted + nombre + tipo +
+ * precio. Seleccionado tiene border primario + check icon. Ya consumido
+ * tiene alpha 0.4 + badge "Ya consumido".
+ */
+@Composable
+private fun ServicioCardPOS(servicio: Servicio, seleccionado: Boolean, onClick: () -> Unit) {
     val consumido = servicio.yaConsumido
+    val border = if (seleccionado) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
             containerColor = when {
-                seleccionado -> MaterialTheme.colorScheme.secondary
+                seleccionado -> MaterialTheme.colorScheme.primaryContainer
                 consumido -> MaterialTheme.colorScheme.surface.copy(alpha = 0.4f)
                 else -> MaterialTheme.colorScheme.surface
             },
-            contentColor = if (seleccionado) MaterialTheme.colorScheme.onSecondary
-                           else MaterialTheme.colorScheme.onSurface,
         ),
+        border = border,
         enabled = !consumido,
         onClick = onClick,
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(Icons.Filled.Restaurant, contentDescription = null, modifier = Modifier.size(28.dp))
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (seleccionado) MaterialTheme.colorScheme.primary
+                        else if (consumido) MaterialTheme.colorScheme.surfaceVariant
+                        else MaterialTheme.colorScheme.secondaryContainer
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Filled.Restaurant,
+                    contentDescription = null,
+                    tint = if (seleccionado) MaterialTheme.colorScheme.onPrimary
+                    else if (consumido) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                    else MaterialTheme.colorScheme.onSecondaryContainer,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(servicio.nombre, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-                Text(servicio.tipo, style = MaterialTheme.typography.bodySmall)
-                if (consumido) {
-                    Spacer(Modifier.height(2.dp))
+                Text(
+                    servicio.nombre,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (consumido)
+                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                    else
+                        MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    servicio.tipo,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                )
+            }
+            when {
+                seleccionado -> Icon(
+                    Icons.Filled.CheckCircle,
+                    contentDescription = "Seleccionado",
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                consumido -> Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = MaterialTheme.shapes.small,
+                ) {
                     Text(
                         "Ya consumido",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                     )
                 }
-            }
-            Column(horizontalAlignment = Alignment.End) {
-                Text("$${servicio.precio}", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                if (consumido) {
-                    Text(
-                        "hoy",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                    )
-                }
+                servicio.precio > 0 -> Text(
+                    "$${servicio.precio}",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                else -> Icon(
+                    Icons.AutoMirrored.Filled.ArrowForward,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f),
+                    modifier = Modifier.size(20.dp),
+                )
             }
         }
     }

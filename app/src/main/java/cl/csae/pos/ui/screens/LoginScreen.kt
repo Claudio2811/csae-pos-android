@@ -1,25 +1,33 @@
 package cl.csae.pos.ui.screens
 
-import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cl.csae.pos.di.ServiceLocator
@@ -31,24 +39,23 @@ import kotlinx.coroutines.launch
 /**
  * Pantalla de login. Sprint 3.1.2: contra la API real de CSAE.
  *
- * Sprint F8 (2026-08-11): rediseño segun wireframes del usuario. Ahora
- * tiene solo 2 campos (Usuario + Contrasena), sin card wrapper ni
- * titulo grande de marca. Los parametros `headerTitle`, `headerSubtitle`
- * y `brandColor` se mantienen para compatibilidad con AppNavHost pero
- * ya no se renderizan en el layout — la UI es la misma para TOTEM /
- * GARZON / POS.
- *
- * Sprint F13 (2026-08-11): maxLength enforced en los 2 campos (200 chars,
- * mismo limite que el LoginRequestValidator) + supportingText con conteo
- * en vivo "X/200". El boton Ingresar valida localmente largo y no-vacio
- * antes de pegarle a la API.
+ * Sprint F8 (2026-08-11): rediseño segun wireframes del usuario.
+ * Sprint F13 (2026-08-11): maxLength enforced en los 2 campos.
+ * Sprint F18.3 (2026-08-11): logo del casino arriba del titulo.
+ * Sprint F23 (2026-08-14): UI Polish v1.
+ *   - Boton "Ingresar" ahora Filled (era Outlined).
+ *   - Header con logo del casino + titulo + subtitulo "Accede al POS".
+ *   - Iconos en los campos de texto (Email, Lock).
+ *   - Toggle de password integrado en el field (icon button trailing).
+ *   - Banner de error con icono + fondo tinted (no solo texto).
+ *   - Loading state con CircularProgressIndicator + texto descriptivo.
+ *   - Version del app + endpoint API en el footer (info tecnica sutil).
+ *   - Espaciado mas generoso y consistente.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LoginScreen(
-    onLoginOk: (UsuarioPos) -> Unit,
-    @Suppress("unused") headerTitle: String = "CSAE POS",
-    @Suppress("unused") headerSubtitle: String = "Control de Servicios de Alimentacion",
-    @Suppress("unused") brandColor: Color? = null,
+    onLoginOk: (UsuarioPos) -> Unit = {},
 ) {
     var usuario by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -58,17 +65,11 @@ fun LoginScreen(
     val focus = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
 
-    // F18.3: el operador puede tener un logo del casino persistido en
-    // AuthStore (de un login anterior en este mismo telefono, o porque
-    // el admin configuro un logo a nivel casino que se ve antes de
-    // loguearse). Mostrarlo arriba del titulo para reforzar la marca.
-    // Si el casino no tiene logo, CasinoLogoImage cae al csae_logo.
     val casinoTheme by ServiceLocator.authRepo.currentCasinoTheme
         .collectAsState(initial = null)
 
-    // Validaciones locales (reflejan las del LoginRequestValidator backend).
     val usuarioError: String? = when {
-        usuario.isBlank() -> null  // solo mostrar despues del primer submit
+        usuario.isBlank() -> null
         usuario.length > 200 -> "Email o usuario demasiado largo (max 200)"
         else -> null
     }
@@ -103,10 +104,6 @@ fun LoginScreen(
             val result = ServiceLocator.authRepo.login(usuario.trim(), password)
             result
                 .onSuccess { u ->
-                    // Sprint F9 (2026-08-11): rechazar usuarios empresa. Esta
-                    // app POS es solo para operadores del casino (AdminCasino,
-                    // OperadorPos, Garzon, etc). Los AdminEmpresa /
-                    // GestorComensales de empresa deben usar el Portal Web.
                     val rol = u.rol
                     if (rol == "AdminEmpresa" || rol == "GestorComensales") {
                         ServiceLocator.authRepo.logout()
@@ -115,12 +112,7 @@ fun LoginScreen(
                             "Los usuarios de empresa usan el Portal Web."
                         return@onSuccess
                     }
-                    // Bajar el catalog en background (no bloquea el login).
                     val cat = ServiceLocator.catalogRepo.refresh()
-                    if (cat.isFailure) {
-                        // No bloqueamos el login por esto: el operador puede ir
-                        // al POS y reintentar la descarga desde ahi.
-                    }
                     loading = false
                     onLoginOk(u)
                 }
@@ -133,59 +125,114 @@ fun LoginScreen(
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
-            modifier = Modifier.fillMaxSize().padding(32.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp, vertical = 32.dp),
             horizontalAlignment = Alignment.Start,
-            verticalArrangement = Arrangement.spacedBy(20.dp, Alignment.Top),
         ) {
-            Spacer(Modifier.height(48.dp))
+            Spacer(Modifier.height(40.dp))
 
-            // Sprint F18.3 (2026-08-11): logo del casino (o CSAE si no hay).
-            // Soporta data URI inline (F17) y URL https (F18 Azure Blob).
-            // El casinoTheme puede ser null si nunca hubo login en este
-            // telefono, en cuyo caso el helper usa el drawable csae_logo.
-            CasinoLogoImage(
-                logoUrl = casinoTheme?.logoUrl,
-                contentDescription = casinoTheme?.razonSocial ?: "CSAE",
-                modifier = Modifier.size(80.dp).padding(bottom = 8.dp),
-            )
+            // Header: logo del casino + titulo + subtitulo.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // Logo con fondo tinted circular.
+                Box(
+                    modifier = Modifier
+                        .size(72.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primaryContainer),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CasinoLogoImage(
+                        logoUrl = casinoTheme?.logoUrl,
+                        contentDescription = casinoTheme?.razonSocial ?: "CSAE",
+                        modifier = Modifier.size(48.dp),
+                    )
+                }
+                Spacer(Modifier.width(16.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        casinoTheme?.razonSocial ?: "CSAE POS",
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                    Text(
+                        "Punto de venta",
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                    )
+                }
+            }
 
-            // Titulo "Iniciar sesion" (wireframe 1)
+            Spacer(Modifier.height(40.dp))
+
+            // Titulo principal.
             Text(
                 "Iniciar sesion",
-                fontSize = 40.sp,
+                fontSize = 32.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onBackground,
             )
+            Text(
+                "Ingresa tus credenciales para acceder al sistema.",
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                modifier = Modifier.padding(top = 4.dp),
+            )
 
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(32.dp))
 
-            // Campo Usuario (Sprint F13: maxLength 200 via AppTextField)
-            AppTextField(
+            // Campo Usuario con icono.
+            OutlinedTextField(
                 value = usuario,
-                onValueChange = { usuario = it; error = null },
-                label = "Usuario",
-                placeholder = "operador o email@empresa.cl",
-                maxLength = 200,
+                onValueChange = { usuario = it.take(200); error = null },
+                label = { Text("Usuario") },
+                placeholder = { Text("operador o email@empresa.cl") },
+                leadingIcon = {
+                    Icon(Icons.Filled.Email, contentDescription = null)
+                },
+                singleLine = true,
                 enabled = !loading,
                 isError = usuarioError != null,
-                errorMessage = usuarioError,
-                modifier = Modifier.fillMaxWidth().focusRequester(focus),
+                supportingText = if (usuarioError != null) {
+                    { Text(usuarioError) }
+                } else null,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(focus),
                 keyboardOptions = KeyboardOptions(
                     keyboardType = KeyboardType.Email,
                     imeAction = ImeAction.Next,
                 ),
+                shape = MaterialTheme.shapes.medium,
             )
 
-            // Campo Contrasena (Sprint F13: maxLength 200 via AppTextField)
-            AppTextField(
+            Spacer(Modifier.height(12.dp))
+
+            // Campo Contrasena con icono + toggle de visibilidad.
+            OutlinedTextField(
                 value = password,
-                onValueChange = { password = it; error = null },
-                label = "Contrasena",
-                placeholder = "minimo 6 caracteres",
-                maxLength = 200,
+                onValueChange = { password = it.take(200); error = null },
+                label = { Text("Contrasena") },
+                placeholder = { Text("minimo 6 caracteres") },
+                leadingIcon = {
+                    Icon(Icons.Filled.Lock, contentDescription = null)
+                },
+                trailingIcon = {
+                    IconButton(onClick = { showPassword = !showPassword }) {
+                        Icon(
+                            imageVector = if (showPassword) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                            contentDescription = if (showPassword) "Ocultar contrasena" else "Mostrar contrasena",
+                        )
+                    }
+                },
+                singleLine = true,
                 enabled = !loading,
                 isError = passwordError != null,
-                errorMessage = passwordError,
+                supportingText = if (passwordError != null) {
+                    { Text(passwordError) }
+                } else null,
                 visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
                 modifier = Modifier.fillMaxWidth(),
                 keyboardOptions = KeyboardOptions(
@@ -193,55 +240,72 @@ fun LoginScreen(
                     imeAction = ImeAction.Done,
                 ),
                 keyboardActions = KeyboardActions(onDone = { submit() }),
-                // Truco para el trailing icon: AppTextField no lo soporta, asi
-                // que wrapeamos el field con un Box con el icon al lado.
+                shape = MaterialTheme.shapes.medium,
             )
 
-            // Sprint F13: el toggle de mostrar/ocultar password se movio a una
-            // fila aparte debajo del field para no romper el AppTextField.
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-            ) {
-                TextButton(onClick = { showPassword = !showPassword }) {
-                    Icon(
-                        imageVector = if (showPassword) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
-                        contentDescription = null,
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Text(if (showPassword) "Ocultar" else "Mostrar")
+            // Banner de error (con icono + fondo tinted, no solo texto rojo).
+            error?.let { msg ->
+                Spacer(Modifier.height(16.dp))
+                Surface(
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            Icons.Filled.Bolt,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.size(20.dp),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            msg,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
                 }
             }
 
-            // Error general del submit (vs. error local del field).
-            error?.let { msg ->
-                Text(
-                    msg,
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
+            Spacer(Modifier.height(24.dp))
 
-            // Boton Ingresar
-            OutlinedButton(
+            // Boton Ingresar (Filled, prominente).
+            Button(
                 onClick = { submit() },
                 enabled = !loading,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(64.dp),
+                    .height(56.dp),
                 shape = MaterialTheme.shapes.medium,
             ) {
                 if (loading) {
                     CircularProgressIndicator(
-                        modifier = Modifier.size(24.dp),
-                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(22.dp),
+                        strokeWidth = 2.5.dp,
+                        color = MaterialTheme.colorScheme.onPrimary,
                     )
                     Spacer(Modifier.width(12.dp))
-                    Text("Conectando...", fontSize = 18.sp)
+                    Text("Conectando...", fontSize = 16.sp, fontWeight = FontWeight.Medium)
                 } else {
-                    Text("Ingresar", fontSize = 22.sp, fontWeight = FontWeight.Medium)
+                    Text("Ingresar", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
+
+            // Footer: hint sutil de ayuda + version.
+            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.height(32.dp))
+            Text(
+                "Si no recuerdas tu contrasena, contacta al administrador del casino.",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.4f),
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
     }
 

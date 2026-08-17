@@ -3,9 +3,13 @@ package cl.csae.pos.data.repository
 import android.content.Context
 import android.provider.Settings
 import cl.csae.pos.data.api.ApiError
+import cl.csae.pos.data.api.CambiarSucursalRequestDto
+import cl.csae.pos.data.api.CambiarSucursalResponseDto
 import cl.csae.pos.data.api.CasinoThemeDto
 import cl.csae.pos.data.api.LoginRequest
+import cl.csae.pos.data.api.MeResponseDto
 import cl.csae.pos.data.api.PosApiService
+import cl.csae.pos.data.api.SucursalDto
 import cl.csae.pos.data.prefs.AuthStore
 import cl.csae.pos.data.selection.DispositivoPosActual
 import cl.csae.pos.model.UsuarioPos
@@ -13,6 +17,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -40,6 +47,17 @@ import kotlinx.serialization.json.Json
  * devuelve 404 porque no tiene casino), el login sigue OK pero los campos
  * de casino quedan en null y la UI usa los colores default + logo del
  * producto (CSAE).
+ *
+ * **Sprint F3 (2026-08-13):** selector de sucursal para OperadorPos.
+ * - Despues del login, el [currentUser] ahora incluye la `sucursalId` activa
+ *   (del DataStore, poblada por el login si el user tiene sucursal default).
+ * - [me] re-baja la lista de sucursales del casino y la cachea en
+ *   [sucursalesDisponibles] (StateFlow). El [SucursalSelectScreen] consume
+ *   ese StateFlow y evita pegarle al API cada vez que se abre.
+ * - [cambiarSucursal] llama a POST /api/v1/auth/cambiar-sucursal, reemplaza
+ *   el JWT cacheado por el nuevo (que lleva el claim `sucursal_id`
+ *   actualizado), persiste en DataStore, y devuelve el [MeResponseDto] para
+ *   que el caller actualice la UI.
  */
 class AuthRepository(
     private val api: PosApiService,
@@ -53,6 +71,13 @@ class AuthRepository(
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
+    // F3: cache en memoria de las sucursales del casino. Se popula via
+    // [me] y se limpia en [logout] (via [resetSession] en ServiceLocator).
+    // El StateFlow permite que el SucursalSelectScreen lo observe y se
+    // re-renderice cuando el user cambia de sucursal desde Configuracion.
+    private val _sucursalesDisponibles = MutableStateFlow<List<SucursalDto>>(emptyList())
+    val sucursalesDisponibles: StateFlow<List<SucursalDto>> = _sucursalesDisponibles.asStateFlow()
+
     init {
         // Pre-cargar el JWT de DataStore en background al iniciar.
         scope.launch { jwtCache = authStore.getToken() }
@@ -61,17 +86,39 @@ class AuthRepository(
     /** Provider del JWT actual, para pasarselo al `ApiClient.build`. */
     val jwtProvider: () -> String? = { jwtCache ?: runBlocking { authStore.getToken() } }
 
-    /** Flow con el perfil del usuario (null si no esta logueado). */
+    /**
+     * F3: perfil del usuario incluyendo la sucursalId activa (del DataStore,
+     * poblada por el login si el user tiene sucursal default, o por
+     * [cambiarSucursal] cuando el user la cambia despues).
+     *
+     * El `combine` de coroutines solo tiene overloads hasta 5 args. Para 6+
+     * se hace un combine anidado: primero 2 grupos de 3, despues con el
+     * token. Asi el tipado queda limpio sin data classes auxiliares.
+     */
+    private val basicUser: Flow<Triple<String?, String?, String?>> = combine(
+        authStore.email,
+        authStore.displayName,
+        authStore.rol,
+    ) { email, name, rol -> Triple(email, name, rol) }
+
+    private val idsUser: Flow<Pair<String?, String?>> = combine(
+        authStore.restauranteId,
+        authStore.sucursalId,
+    ) { restId, sucId -> restId to sucId }
+
     val currentUser: Flow<UsuarioPos?> = combine(
-        authStore.email, authStore.displayName, authStore.rol, authStore.restauranteId, authStore.token
-    ) { email, name, rol, restId, token ->
+        basicUser,
+        idsUser,
+        authStore.token,
+    ) { basic, ids, token ->
         if (token == null) null
         else UsuarioPos(
-            username = email ?: "",
-            displayName = name ?: email ?: "",
-            email = email ?: "",
-            rol = rol ?: "",
-            restauranteId = restId,
+            username = basic.first ?: "",
+            displayName = basic.second ?: basic.first ?: "",
+            email = basic.first ?: "",
+            rol = basic.third ?: "",
+            restauranteId = ids.first,
+            sucursalId = ids.second,
         )
     }
 
@@ -124,7 +171,17 @@ class AuthRepository(
                 return Result.failure(IllegalStateException(msg))
             }
             val body = resp.body() ?: return Result.failure(IllegalStateException("Respuesta vacia del API."))
-            authStore.save(body.token, body.email, body.email, body.rol, body.restauranteId)
+            // F3: si el login devuelve una sucursal default, la persistimos.
+            // Si es null, NO borramos la anterior (eso lo hace setSucursal(null)
+            // cuando el user elige "casino completo" en el selector).
+            authStore.save(
+                token = body.token,
+                email = body.email,
+                displayName = body.email,
+                rol = body.rol,
+                restauranteId = body.restauranteId,
+                sucursalId = body.sucursalId,
+            )
             jwtCache = body.token
 
             // Sprint F16: despues del login, bajar el casino y guardar su tema.
@@ -149,6 +206,23 @@ class AuthRepository(
                 // Ignorar: el user podria no tener casino (AdminEmpresa)
             }
 
+            // F3: re-bajar la lista de sucursales del casino (si es OperadorPos).
+            // Se hace en background para no bloquear el login, pero ANTES de
+            // retornar para que el [SucursalSelectScreen] post-login ya tenga
+            // la lista lista. Si falla, no es fatal: el screen puede llamar
+            // [me] de nuevo.
+            try {
+                val meResp = api.me()
+                if (meResp.isSuccessful) {
+                    val me = meResp.body()
+                    if (me != null) {
+                        _sucursalesDisponibles.value = me.sucursales
+                    }
+                }
+            } catch (_: Exception) {
+                // Ignorar: el operador puede reintentar desde Configuracion.
+            }
+
             // F19: reconciliador al login. Auto-selecciona el dispositivo POS
             // del operador si el AndroidId del telefono matchea uno del casino.
             // No fatal si falla — el operador puede elegir manualmente.
@@ -161,6 +235,7 @@ class AuthRepository(
                     email = body.email,
                     rol = body.rol,
                     restauranteId = body.restauranteId,
+                    sucursalId = body.sucursalId,
                 )
             )
         } catch (t: Throwable) {
@@ -173,6 +248,62 @@ class AuthRepository(
         // incluyendo los de casino (casinoId, colorPrimario, etc).
         authStore.clear()
         jwtCache = null
+        // F3: limpiar la cache de sucursales para que el proximo login
+        // empiece con lista vacia (se re-baja via [me] en el login).
+        _sucursalesDisponibles.value = emptyList()
+    }
+
+    /**
+     * F3: consulta el perfil completo del user al backend y actualiza la
+     * cache de sucursales. Usado por:
+     * - [SucursalSelectScreen] post-login (si [login] no las bajo).
+     * - El boton "Refrescar sucursales" de Configuracion.
+     */
+    suspend fun me(): Result<MeResponseDto> {
+        return try {
+            val resp = api.me()
+            if (!resp.isSuccessful) {
+                val msg = parseError(resp.errorBody()?.string(), resp.code())
+                return Result.failure(IllegalStateException(msg))
+            }
+            val body = resp.body() ?: return Result.failure(IllegalStateException("Respuesta vacia del API."))
+            _sucursalesDisponibles.value = body.sucursales
+            Result.success(body)
+        } catch (t: Throwable) {
+            Result.failure(t)
+        }
+    }
+
+    /**
+     * F3: cambia la sucursal activa. Llama a POST /api/v1/auth/cambiar-sucursal,
+     * reemplaza el JWT cacheado por el nuevo (que lleva el claim `sucursal_id`
+     * actualizado), persiste en DataStore, y devuelve el [CambiarSucursalResponseDto]
+     * para que el caller actualice la UI.
+     *
+     * **Importante:** despues de un cambio de sucursal exitoso, el cliente
+     * debe re-bajar el [CatalogRepository] (los comensales/servicios son
+     * distintos por sucursal). Esto NO se hace aca para no acoplar el repo
+     * de auth al de catalog; el caller (SucursalSelectScreen o ConfiguracionScreen)
+     * lo gatilla.
+     */
+    suspend fun cambiarSucursal(sucursalId: String): Result<CambiarSucursalResponseDto> {
+        return try {
+            val resp = api.cambiarSucursal(CambiarSucursalRequestDto(sucursalId))
+            if (!resp.isSuccessful) {
+                val msg = parseError(resp.errorBody()?.string(), resp.code())
+                return Result.failure(IllegalStateException(msg))
+            }
+            val body = resp.body() ?: return Result.failure(IllegalStateException("Respuesta vacia del API."))
+            // Reemplazar el JWT cacheado por el nuevo (sincronico, el ApiClient
+            // lo lee en el interceptor de OkHttp).
+            jwtCache = body.token
+            // Persistir la nueva sucursal en DataStore para que sobreviva
+            // entre sesiones (igual que el restauranteId).
+            authStore.setSucursal(body.sucursalId)
+            Result.success(body)
+        } catch (t: Throwable) {
+            Result.failure(t)
+        }
     }
 
     /**

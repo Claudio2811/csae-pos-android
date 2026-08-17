@@ -9,46 +9,56 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.os.Build
-import cl.csae.pos.model.Comensal
-import cl.csae.pos.model.Servicio
+import android.util.Log
 import cl.csae.pos.model.Ticket
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.IOException
-import java.io.OutputStream
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * PrinterService: impresion Bluetooth ESC/POS basica (58mm termica).
+ * PrinterService: impresion Bluetooth ESC/POS directa via `BluetoothSocket`.
  *
- * Compatible con impresoras estandar 58mm que soporten ESC/POS (Epson, Star, Xprinter, etc.).
+ * F4.4 (2026-08-13): reversion al patron original que SÍ funciona con la
+ * PPT305BT del casino Demo (mismo device, misma MAC DC:0D:30:D5:79:BA).
+ * El SDK vendor (`posprinterconnectandsendsdk.jar`) usado en F4 / F4.2 /
+ * F4.3 fallaba con `connectBtPort` retornando `onfailed` en este device
+ * especifico. La causa mas probable: el SDK usa un UUID RFCOMM interno
+ * propio que NO matchea con el UUID SPP estandar
+ * (`00001101-0000-1000-8000-00805F9B34FB`) que usan las impresoras
+ * ESC/POS genericas como esta PPT305BT.
  *
- * Flujo:
- *   1. Usuario empareja la impresora desde Settings del dispositivo.
- *   2. POS lista los dispositivos emparejados (BluetoothAdapter.bondedDevices).
- *   3. Usuario elige uno (mac address).
- *   4. POS abre socket RFCOMM y envia comandos ESC/POS.
- *
- * Sprint 3.2: agrega soporte para QR via comandos `GS ( k` (estandar Epson ESC/POS).
- *   - Funcion 165: seleccionar modelo QR
- *   - Funcion 167: setear tamano del modulo
- *   - Funcion 169: setear nivel de correccion
- *   - Funcion 180: almacenar data
- *   - Funcion 181: imprimir
+ * **Patron:** abrir un `BluetoothSocket` directo via SPP standard UUID
+ * + enviar comandos ESC/POS raw al `outputStream`. Esto es lo que el
+ * commit `da09788` hacia antes de F4 y era 100% funcional.
  *
  * **Permisos requeridos (AndroidManifest):**
  * - BLUETOOTH (max SDK 30)
- * - BLUETOOTH_CONNECT (Android 12+)
+ * - BLUETOOTH_CONNECT (Android 12+, runtime permission)
  * - BLUETOOTH_SCAN (Android 12+, noForLocation)
  */
 class PrinterService(private val context: Context) {
 
+    @Volatile private var socket: BluetoothSocket? = null
+    private val connecting = AtomicBoolean(false)
+
     /**
-     * Lista los dispositivos Bluetooth ya emparejados.
+     * UUID SPP estandar. TODAS las impresoras ESC/POS Bluetooth genéricas
+     * (Epson, Star, Xprinter, PPT305BT, etc.) escuchan en este UUID.
+     * Usar el UUID SPP es la forma mas compatible; el SDK vendor usaba
+     * un UUID interno que no siempre matchea.
+     */
+    private val sppUuid: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
+
+    /**
+     * Lista los dispositivos Bluetooth ya emparejados (no requiere el SDK
+     * vendor, usamos BluetoothAdapter directo del sistema).
      */
     @SuppressLint("MissingPermission")
     fun listarEmparejados(): List<BluetoothDevice> {
@@ -58,72 +68,194 @@ class PrinterService(private val context: Context) {
     }
 
     /**
-     * Imprime un ticket via Bluetooth ESC/POS.
-     * @return true si se imprimio OK, false si fallo.
+     * Conecta a la impresora Bluetooth via `BluetoothSocket` + UUID SPP.
+     * Si ya esta conectado a la misma MAC, retorna success sin re-conectar.
+     *
+     * F4.4: agregado chequeo de permisos Bluetooth (API 31+) ANTES de
+     * intentar la conexion, para fallar rapido con mensaje claro.
      */
-    suspend fun imprimir(deviceAddress: String, ticket: Ticket): Result<Unit> = withContext(Dispatchers.IO) {
-        val adapter = bluetoothAdapter ?: return@withContext Result.failure(
-            IllegalStateException("Bluetooth no disponible en este dispositivo.")
-        )
-        val device = try { adapter.getRemoteDevice(deviceAddress) } catch (e: Exception) {
-            return@withContext Result.failure(IllegalStateException("No se encontro el dispositivo: ${e.message}"))
+    @SuppressLint("MissingPermission")
+    suspend fun connectBtPort(macAddress: String): Result<Unit> = withContext(Dispatchers.IO) {
+        if (macAddress.isBlank()) {
+            return@withContext Result.failure(IllegalArgumentException("MAC vacio."))
         }
-        var socket: BluetoothSocket? = null
+        // Permiso BLUETOOTH_CONNECT (API 31+ runtime permission).
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val granted = context.checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+            if (!granted) {
+                Log.e(TAG, "connectBtPort: sin permiso BLUETOOTH_CONNECT (API 31+)")
+                return@withContext Result.failure(IllegalStateException(
+                    "Sin permiso BLUETOOTH_CONNECT. Otorgalo en Settings > Apps > " +
+                        "CSAE POS > Permisos > Dispositivos cercanos."
+                ))
+            }
+        }
+        if (!connecting.compareAndSet(false, true)) {
+            return@withContext Result.failure(IllegalStateException("Ya hay una conexion en curso."))
+        }
         try {
-            socket = createSocket(device)
-            socket.connect() // Conectar antes de obtener el output stream
-            val out = socket.outputStream
-            enviarTicketEscPos(out, ticket)
-            out.flush()
+            Log.d(TAG, "connectBtPort: mac=$macAddress")
+            val adapter = bluetoothAdapter ?: return@withContext Result.failure(
+                IllegalStateException("Bluetooth no disponible en este dispositivo.")
+            )
+            val device = try { adapter.getRemoteDevice(macAddress) } catch (e: Exception) {
+                return@withContext Result.failure(IllegalStateException("MAC invalida: $macAddress"))
+            }
+            // Cerrar socket anterior si existe (re-conectar).
+            try { socket?.close() } catch (_: Exception) {}
+            socket = null
+            // Crear socket SPP. API 31+ usa `createInsecureRfcommSocketToServiceRecord`
+            // (sin pairing required, equivalente al que el codigo custom anterior usaba).
+            val s = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                device.createInsecureRfcommSocketToServiceRecord(sppUuid)
+            } else {
+                device.createRfcommSocketToServiceRecord(sppUuid)
+            }
+            Log.d(TAG, "connectBtPort: socket creado, llamando connect() (UUID SPP)...")
+            // Pitfall F4.4: `socket.connect()` debe llamarse ANTES de
+            // `outputStream`. Si no, el stream no se inicializa.
+            s.connect()
+            Log.d(TAG, "connectBtPort: connect() OK")
+            socket = s
             Result.success(Unit)
         } catch (e: SecurityException) {
-            Result.failure(IllegalStateException("Sin permiso BLUETOOTH_CONNECT. Activalo en Settings."))
+            Log.e(TAG, "connectBtPort: SecurityException: ${e.message}")
+            Result.failure(IllegalStateException(
+                "Sin permiso BLUETOOTH_CONNECT. Otorgalo en Settings del dispositivo."
+            ))
         } catch (e: IOException) {
-            Result.failure(IllegalStateException("Error de comunicacion con la impresora: ${e.message}"))
+            Log.e(TAG, "connectBtPort: IOException: ${e.message}", e)
+            // Errores tipicos: "Service discovery failed" (UUID no soportado),
+            // "Connection refused" (impresora apagada o no emparejada),
+            // "Connection timeout" (fuera de rango).
+            Result.failure(IllegalStateException(
+                "No se pudo conectar a $macAddress: ${e.message ?: "desconocido"}. " +
+                    "Verifica: (1) la MAC corresponde a esta impresora (revisa la " +
+                    "etiqueta), (2) la impresora esta encendida, (3) esta emparejada " +
+                    "en Settings > Bluetooth."
+            ))
         } catch (e: Exception) {
+            Log.e(TAG, "connectBtPort: ${e.javaClass.simpleName}: ${e.message}", e)
             Result.failure(e)
         } finally {
-            try { socket?.close() } catch (_: Exception) {}
+            connecting.set(false)
         }
     }
 
     /**
-     * Imprime un ticket con QR + texto. Usado en el preview de TicketScreen
-     * (sprint 3.2). Si el qrToken es null o vacio, imprime solo el texto.
+     * Desconecta la impresora actual. Si no esta conectado, es no-op.
      */
-    suspend fun imprimirTicketConQr(
-        deviceAddress: String,
-        ticket: Ticket,
-        qrToken: String?,
-    ): Result<Unit> = withContext(Dispatchers.IO) {
-        val adapter = bluetoothAdapter ?: return@withContext Result.failure(
-            IllegalStateException("Bluetooth no disponible en este dispositivo.")
-        )
-        val device = try { adapter.getRemoteDevice(deviceAddress) } catch (e: Exception) {
-            return@withContext Result.failure(IllegalStateException("No se encontro el dispositivo: ${e.message}"))
-        }
-        var socket: BluetoothSocket? = null
+    suspend fun disconnect(): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            socket = createSocket(device)
-            socket.connect()
-            val out = socket.outputStream
-            enviarTicketEscPos(out, ticket, qrToken)
+            socket?.close()
+        } catch (_: Exception) {
+        }
+        socket = null
+        Result.success(Unit)
+    }
+
+    /**
+     * Envia un ticket al printer. Asume que ya esta conectado.
+     * Si no esta conectado, retorna error.
+     *
+     * F4.5 (2026-08-13): concatena todos los ByteArrays en un unico buffer
+     * y hace UN write + flush + delay(150ms). El patron anterior
+     * (`for (bytes in ...) { out.write(bytes) }`) hacia N writes
+     * consecutivos, y en algunas impresoras el outputStream Bluetooth
+     * hace buffering interno por write — el resultado era que la
+     * impresora recibia los bytes incompletos o fuera de orden, y no
+     * imprimia. Un solo write grande + delay post-flush es la forma
+     * robusta.
+     */
+    suspend fun imprimirTicket(ticket: Ticket, qrToken: String?): Result<Unit> = withContext(Dispatchers.IO) {
+        val s = socket ?: return@withContext Result.failure(
+            IllegalStateException("Impresora no conectada. Llama a connectBtPort() primero.")
+        )
+        if (!s.isConnected) {
+            return@withContext Result.failure(IllegalStateException("Socket Bluetooth no esta conectado."))
+        }
+        try {
+            val out = s.outputStream
+            val buffer = concatBytes(buildTicketCommands(ticket, qrToken))
+            Log.d(TAG, "imprimirTicket: ${buffer.size} bytes a enviar (ticket=${ticket.numero})")
+            out.write(buffer)
             out.flush()
+            // F4.5: delay post-flush. La PPT305BT (y la mayoria de las
+            // impresoras termicas) procesan el buffer en background.
+            // Si cerramos el socket inmediatamente, a veces se cortan
+            // los ultimos bytes. 150ms es suficiente y no perceptible
+            // para el operador.
+            delay(150)
+            Log.d(TAG, "imprimirTicket: OK (${buffer.size} bytes enviados)")
             Result.success(Unit)
-        } catch (e: SecurityException) {
-            Result.failure(IllegalStateException("Sin permiso BLUETOOTH_CONNECT. Activalo en Settings."))
         } catch (e: IOException) {
-            Result.failure(IllegalStateException("Error de comunicacion con la impresora: ${e.message}"))
+            Log.e(TAG, "imprimirTicket: IOException: ${e.message}", e)
+            try { s.close() } catch (_: Exception) {}
+            socket = null
+            Result.failure(IllegalStateException("Conexion perdida durante impresion: ${e.message}"))
         } catch (e: Exception) {
+            Log.e(TAG, "imprimirTicket: ${e.javaClass.simpleName}: ${e.message}", e)
             Result.failure(e)
-        } finally {
-            try { socket?.close() } catch (_: Exception) {}
         }
     }
 
     /**
-     * Genera un Bitmap QR (monocromatico) para mostrar en pantalla. Usado por
-     * el preview del ticket (sprint 3.2).
+     * Imprime un ticket de prueba: "CSAE POS - PRUEBA". Usado desde
+     * Configuracion para verificar que la impresora responde.
+     */
+    suspend fun imprimirPrueba(): Result<Unit> = withContext(Dispatchers.IO) {
+        val s = socket ?: return@withContext Result.failure(
+            IllegalStateException("Impresora no conectada.")
+        )
+        if (!s.isConnected) {
+            return@withContext Result.failure(IllegalStateException("Socket Bluetooth no esta conectado."))
+        }
+        try {
+            val out = s.outputStream
+            val buffer = concatBytes(buildPruebaCommands())
+            Log.d(TAG, "imprimirPrueba: ${buffer.size} bytes a enviar")
+            out.write(buffer)
+            out.flush()
+            delay(150)
+            Log.d(TAG, "imprimirPrueba: OK")
+            Result.success(Unit)
+        } catch (e: IOException) {
+            Log.e(TAG, "imprimirPrueba: IOException: ${e.message}", e)
+            try { s.close() } catch (_: Exception) {}
+            socket = null
+            Result.failure(IllegalStateException("Conexion perdida durante prueba: ${e.message}"))
+        } catch (e: Exception) {
+            Log.e(TAG, "imprimirPrueba: ${e.javaClass.simpleName}: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Imprime un bitmap (usado por TicketScreen para imprimir el preview
+     * del ticket generado, F6). Espera a que la conexion este establecida.
+     */
+    suspend fun imprimirBitmap(bitmap: Bitmap, width: Int = 576): Result<Unit> = withContext(Dispatchers.IO) {
+        val s = socket ?: return@withContext Result.failure(
+            IllegalStateException("Impresora no conectada.")
+        )
+        try {
+            val out = s.outputStream
+            for (bytes in buildBitmapCommands(bitmap, width)) {
+                out.write(bytes)
+            }
+            out.flush()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e(TAG, "imprimirBitmap: ${e.javaClass.simpleName}: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Genera un Bitmap QR (monocromatico) para mostrar en pantalla. Se usa
+     * en el preview del ticket (TicketScreen). NO se envia a la impresora:
+     * para el ticket, el QR se manda via comandos GS ( k directamente.
      */
     fun generarQrBitmap(contenido: String, sizePx: Int = 512): Bitmap? {
         if (contenido.isBlank()) return null
@@ -145,144 +277,183 @@ class PrinterService(private val context: Context) {
         }
     }
 
-    /**
-     * Ticket de prueba simple: envia un "HELLO" a la impresora.
-     * Usado desde la pantalla de Configuracion.
-     */
-    suspend fun imprimirPrueba(deviceAddress: String): Result<Unit> = withContext(Dispatchers.IO) {
-        val adapter = bluetoothAdapter ?: return@withContext Result.failure(
-            IllegalStateException("Bluetooth no disponible en este dispositivo.")
-        )
-        val device = try { adapter.getRemoteDevice(deviceAddress) } catch (e: Exception) {
-            return@withContext Result.failure(IllegalStateException("No se encontro el dispositivo: ${e.message}"))
-        }
-        var socket: BluetoothSocket? = null
-        try {
-            socket = createSocket(device)
-            socket.connect()
-            val out = socket.outputStream
-            out.write(byteArrayOf(0x1B, 0x40)) // Init
-            out.write(byteArrayOf(0x1B, 0x61, 0x01)) // Center
-            out.write(byteArrayOf(0x1D, 0x21, 0x11)) // Tamano doble
-            out.write("CSAE POS - PRUEBA\n".toByteArray(Charsets.UTF_8))
-            out.write(byteArrayOf(0x1D, 0x21, 0x00))
-            out.write("Si lees esto, la impresora esta OK.\n".toByteArray(Charsets.UTF_8))
-            out.write("\n\n\n".toByteArray(Charsets.UTF_8))
-            out.write(byteArrayOf(0x1D, 0x56, 0x00)) // Corte parcial
-            out.flush()
-            Result.success(Unit)
-        } catch (e: SecurityException) {
-            Result.failure(IllegalStateException("Sin permiso BLUETOOTH_CONNECT. Activalo en Settings."))
-        } catch (e: IOException) {
-            Result.failure(IllegalStateException("Error de comunicacion con la impresora: ${e.message}"))
-        } catch (e: Exception) {
-            Result.failure(e)
-        } finally {
-            try { socket?.close() } catch (_: Exception) {}
-        }
+    // ================================================================
+    // Comandos ESC/POS (manuales, sin SDK vendor)
+    // ================================================================
+
+    private fun buildPruebaCommands(): List<ByteArray> {
+        val list = ArrayList<ByteArray>()
+        list.add(escInit())
+        list.add(escAlign(1))  // center
+        list.add(escCharSize(0x11))  // doble
+        list.add("CSAE POS - PRUEBA\n".toByteArray(Charsets.UTF_8))
+        list.add(escCharSize(0x00))  // normal
+        list.add("Si lees esto, la impresora esta OK.\n".toByteArray(Charsets.UTF_8))
+        list.add("\n\n\n".toByteArray(Charsets.UTF_8))
+        list.add(gsCut())
+        return list
     }
 
-    @SuppressLint("MissingPermission")
-    private fun createSocket(device: BluetoothDevice): BluetoothSocket {
-        // En API 31+ podemos usar createInsecureRfcommSocketToServiceRecord (sin pairing required).
-        // En API < 31 usamos el UUID SPP estandar.
-        val uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            device.createInsecureRfcommSocketToServiceRecord(uuid)
-        } else {
-            device.createRfcommSocketToServiceRecord(uuid)
+    private fun buildTicketCommands(ticket: Ticket, qrToken: String?): List<ByteArray> {
+        val list = ArrayList<ByteArray>()
+        list.add(escInit())
+        // Header
+        list.add(escAlign(1))  // center
+        list.add(escCharSize(0x11))  // doble
+        list.add("CSAE POS\n".toByteArray(Charsets.UTF_8))
+        list.add(escCharSize(0x00))
+        list.add("${ticket.comensal.empresa}\n".toByteArray(Charsets.UTF_8))
+        list.add("--------------------------------\n".toByteArray(Charsets.UTF_8))
+        list.add(escAlign(0))  // left
+        list.add("${ticket.fechaHora}\n".toByteArray(Charsets.UTF_8))
+        list.add("Ticket: ${ticket.numero}\n".toByteArray(Charsets.UTF_8))
+        list.add("--------------------------------\n".toByteArray(Charsets.UTF_8))
+        list.add("Comensal: ${ticket.comensal.nombre} ${ticket.comensal.apellido ?: ""}\n".toByteArray(Charsets.UTF_8))
+        list.add("RUT: ${ticket.comensal.rut}\n".toByteArray(Charsets.UTF_8))
+        if (ticket.comensal.empresa.isNotEmpty()) {
+            list.add("Empresa: ${ticket.comensal.empresa}\n".toByteArray(Charsets.UTF_8))
         }
-    }
-
-    /**
-     * Envia el ticket en formato ESC/POS.
-     * Comandos basicos: ESC @ (init), ESC ! n (tamano), GS V 0 (corte parcial).
-     * Si [qrToken] no es null ni vacio, agrega el QR al final del ticket.
-     */
-    private fun enviarTicketEscPos(out: OutputStream, ticket: Ticket, qrToken: String? = null) {
-        val t = ticket
-        // ESC @ = Init
-        out.write(byteArrayOf(0x1B, 0x40))
-        // Center
-        out.write(byteArrayOf(0x1B, 0x61, 0x01))
-        // Tamano doble
-        out.write(byteArrayOf(0x1D, 0x21, 0x11))
-        out.write("CSAE POS\n".toByteArray(Charsets.UTF_8))
-        // Tamano normal
-        out.write(byteArrayOf(0x1D, 0x21, 0x00))
-        out.write("Casino Salamanca\n".toByteArray(Charsets.UTF_8))
-        out.write("--------------------------------\n".toByteArray(Charsets.UTF_8))
-        out.write("${t.fechaHora}\n".toByteArray(Charsets.UTF_8))
-        out.write("Ticket: ${t.numero}\n".toByteArray(Charsets.UTF_8))
-        out.write("--------------------------------\n".toByteArray(Charsets.UTF_8))
-        out.write("Comensal: ${t.comensal.nombre} ${t.comensal.apellido ?: ""}\n".toByteArray(Charsets.UTF_8))
-        out.write("RUT: ${t.comensal.rut}\n".toByteArray(Charsets.UTF_8))
-        if (t.comensal.empresa.isNotEmpty()) {
-            out.write("Empresa: ${t.comensal.empresa}\n".toByteArray(Charsets.UTF_8))
-        }
-        out.write("--------------------------------\n".toByteArray(Charsets.UTF_8))
-        out.write("Servicio: ${t.servicio.nombre}\n".toByteArray(Charsets.UTF_8))
-        out.write("Tipo: ${t.servicio.tipo}\n".toByteArray(Charsets.UTF_8))
+        list.add("--------------------------------\n".toByteArray(Charsets.UTF_8))
+        list.add("Servicio: ${ticket.servicio.nombre}\n".toByteArray(Charsets.UTF_8))
+        list.add("Tipo: ${ticket.servicio.tipo}\n".toByteArray(Charsets.UTF_8))
         // Precio en grande
-        out.write(byteArrayOf(0x1D, 0x21, 0x11))
-        out.write("Precio: $${t.precio.takeIf { it > 0 } ?: t.servicio.precio}\n".toByteArray(Charsets.UTF_8))
-        out.write(byteArrayOf(0x1D, 0x21, 0x00))
-        out.write("--------------------------------\n".toByteArray(Charsets.UTF_8))
-        out.write("Operador: ${t.operador}\n".toByteArray(Charsets.UTF_8))
+        list.add(escCharSize(0x11))
+        list.add("Precio: $${ticket.precio.takeIf { it > 0 } ?: ticket.servicio.precio}\n".toByteArray(Charsets.UTF_8))
+        list.add(escCharSize(0x00))
+        list.add("--------------------------------\n".toByteArray(Charsets.UTF_8))
+        list.add("Operador: ${ticket.operador}\n".toByteArray(Charsets.UTF_8))
 
-        // QR (si viene)
+        // QR via comandos GS ( k (modelo 2, modulo 4, level M).
         if (!qrToken.isNullOrBlank()) {
-            out.write("\n".toByteArray(Charsets.UTF_8))
-            try {
-                imprimirQr(out, qrToken)
-            } catch (_: Exception) {
-                // Si la impresora no soporta QR, seguimos sin cortar el ticket.
+            list.add("\n".toByteArray(Charsets.UTF_8))
+            list.add(escAlign(1))  // center
+            list.add(gsQRModel(2))      // modelo 2
+            list.add(gsQRSize(4))       // tamano modulo 4
+            list.add(gsQRError(0x31))   // error correction M
+            list.add(gsQRStore(qrToken))
+            list.add(gsQRPrint())
+            list.add("\n".toByteArray(Charsets.UTF_8))
+        }
+
+        list.add("\n\n\n".toByteArray(Charsets.UTF_8))
+        list.add(gsCut())
+        return list
+    }
+
+    private fun buildBitmapCommands(bitmap: Bitmap, width: Int): List<ByteArray> {
+        val list = ArrayList<ByteArray>()
+        list.add(escInit())
+        // Convertir bitmap a bytes ESC/POS GS v 0 (raster bit image).
+        // Para impresoras 80mm, ancho max util ~576 dots a 203dpi.
+        list.add(gsv0(bitmap, width))
+        list.add(gsCut())
+        return list
+    }
+
+    // --- Comandos ESC/POS individuales ---
+
+    /** ESC @ (1B 40) - Inicializar impresora. */
+    private fun escInit(): ByteArray = byteArrayOf(0x1B, 0x40)
+
+    /** ESC a n (1B 61 n) - Seleccionar alineacion. 0=left, 1=center, 2=right. */
+    private fun escAlign(n: Int): ByteArray = byteArrayOf(0x1B, 0x61, n.toByte())
+
+    /** ESC ! n (1B 21 n) - Seleccionar tamano de caracter.
+     *  Bit 3 (0x08) = doble ancho. Bit 4 (0x10) = doble alto.
+     *  0x00 = normal, 0x11 = doble ancho y alto. */
+    private fun escCharSize(n: Int): ByteArray = byteArrayOf(0x1B, 0x21, n.toByte())
+
+    /** GS V m (1D 56 m) - Cortar papel. 0x42 0x00 = corte parcial. */
+    private fun gsCut(): ByteArray = byteArrayOf(0x1D, 0x56, 0x42, 0x00)
+
+    // --- QR via GS ( k ---
+
+    /** GS ( k - Funcion 1: Seleccionar modelo QR (modelo 2 = n=50). */
+    private fun gsQRModel(n: Int): ByteArray = byteArrayOf(
+        0x1D, 0x28, 0x6B, 0x04, 0x00, 0x31, 0x41, n.toByte(), 0x00
+    )
+
+    /** GS ( k - Funcion 2: Tamano del modulo (1-16, default 3). */
+    private fun gsQRSize(n: Int): ByteArray = byteArrayOf(
+        0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x43, n.toByte()
+    )
+
+    /** GS ( k - Funcion 3: Error correction. 0x30=L, 0x31=M, 0x32=Q, 0x33=H. */
+    private fun gsQRError(n: Int): ByteArray = byteArrayOf(
+        0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x45, n.toByte()
+    )
+
+    /** GS ( k - Funcion 4: Almacenar data del QR en symbol storage area.
+     *  Header: 1D 28 6B pL pH 31 50 48 n [data]
+     *  pLpH = (data.length + 3) en little-endian.
+     *  n = 48 (48 decimal = 0x30) = modo 8-bit. */
+    private fun gsQRStore(data: String): ByteArray {
+        val dataBytes = data.toByteArray(Charsets.UTF_8)
+        val totalLen = dataBytes.size + 3
+        val pL = (totalLen and 0xFF).toByte()
+        val pH = ((totalLen shr 8) and 0xFF).toByte()
+        val header = byteArrayOf(0x1D, 0x28, 0x6B, pL, pH, 0x31, 0x50, 0x30)
+        return header + dataBytes
+    }
+
+    /** GS ( k - Funcion 5: Imprimir QR del symbol storage area. */
+    private fun gsQRPrint(): ByteArray = byteArrayOf(
+        0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x51, 0x30
+    )
+
+    // --- Raster bit image (GS v 0) ---
+
+    /** GS v 0 m xL xH yL yH [data] - Imprimir bitmap raster.
+     *  m = 0 (normal), 1 (doble ancho), 2 (doble alto), 3 (doble ambos).
+     *  xL xH = ancho en bytes = width / 8.
+     *  yL yH = alto en dots. */
+    private fun gsv0(bitmap: Bitmap, width: Int, m: Int = 0): ByteArray {
+        val w = width / 8
+        val h = bitmap.height
+        val xL = (w and 0xFF).toByte()
+        val xH = ((w shr 8) and 0xFF).toByte()
+        val yL = (h and 0xFF).toByte()
+        val yH = ((h shr 8) and 0xFF).toByte()
+        val header = byteArrayOf(0x1D, 0x76, 0x30, m.toByte(), xL, xH, yL, yH)
+        // Convertir bitmap a bytes 1-bit. Cada byte = 8 pixeles horizontales.
+        val pixels = IntArray(w * 8 * h)
+        bitmap.getPixels(pixels, 0, w * 8, 0, 0, w * 8, h)
+        val data = ByteArray(w * h)
+        for (y in 0 until h) {
+            for (xByte in 0 until w) {
+                var b = 0
+                for (bit in 0 until 8) {
+                    val x = xByte * 8 + bit
+                    val pixel = pixels[y * w * 8 + x]
+                    val luminance = (pixel shr 16 and 0xFF) * 0.299 +
+                        (pixel shr 8 and 0xFF) * 0.587 +
+                        (pixel and 0xFF) * 0.114
+                    if (luminance < 128) {
+                        b = b or (1 shl (7 - bit))
+                    }
+                }
+                data[y * w + xByte] = b.toByte()
             }
         }
-
-        out.write("\n\n\n".toByteArray(Charsets.UTF_8))
-        // GS V 0 = Corte parcial
-        out.write(byteArrayOf(0x1D, 0x56, 0x00))
+        return header + data
     }
 
+    // ================================================================
+
     /**
-     * Envia el comando QR (Epson ESC/POS `GS ( k`).
-     *
-     * Funciones usadas:
-     *   - 165 (0xA5): seleccionar modelo (modelo 2 = 50, 0x32)
-     *   - 167 (0xA7): setear tamano del modulo (n = 4 ~ 5mm en 58mm)
-     *   - 169 (0xA9): setear nivel de correccion (M = 49, 0x31 = 15%)
-     *   - 180 (0xB4): almacenar data (4 bytes de header + data)
-     *   - 181 (0xB5): imprimir
-     *
-     * Documentacion Epson: TM-T88V Command Reference, pag ~250.
+     * Concatena una lista de ByteArrays en uno solo. Util para enviar
+     * todo el ticket / prueba en un unico `out.write()` y evitar el
+     * buffering por write que tienen algunos BluetoothSocket.
      */
-    fun imprimirQr(out: OutputStream, qrToken: String) {
-        val data = qrToken.toByteArray(Charsets.UTF_8)
-        if (data.isEmpty()) return
-
-        // GS ( k  Function 165  pl  ph  cn  fn  n1  n2
-        // 4 bytes de parametros: cn=49 (0x31), fn=65 (0x41, modelo), n1=50 (0x32, modelo 2), n2=0
-        out.write(byteArrayOf(0x1D, 0x28, 0x6B, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00))
-
-        // GS ( k  Function 167  pl  ph  cn  fn  n
-        // cn=49, fn=67, n = tamano modulo (4)
-        out.write(byteArrayOf(0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x43, 0x04))
-
-        // GS ( k  Function 169  pl  ph  cn  fn  n
-        // cn=49, fn=69, n = nivel de correccion (49 = '1' = ~15% / Level M)
-        out.write(byteArrayOf(0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x45, 0x31))
-
-        // GS ( k  Function 180  pl  ph  cn  fn  data
-        // pL = (data.size + 3) & 0xFF, pH = (data.size + 3) >> 8
-        val pL = ((data.size + 3) and 0xFF).toByte()
-        val pH = (((data.size + 3) shr 8) and 0xFF).toByte()
-        out.write(byteArrayOf(0x1D, 0x28, 0x6B, pL, pH, 0x31, 0x50, 0x30))
-        out.write(data)
-
-        // GS ( k  Function 181  pl  ph  cn  fn  m
-        // m = 0 (imprimir)
-        out.write(byteArrayOf(0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x51, 0x30))
+    private fun concatBytes(chunks: List<ByteArray>): ByteArray {
+        val total = chunks.sumOf { it.size }
+        val out = ByteArray(total)
+        var offset = 0
+        for (chunk in chunks) {
+            System.arraycopy(chunk, 0, out, offset, chunk.size)
+            offset += chunk.size
+        }
+        return out
     }
 
     private val bluetoothAdapter: BluetoothAdapter?
@@ -290,4 +461,8 @@ class PrinterService(private val context: Context) {
             val manager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
             return manager?.adapter
         }
+
+    private companion object {
+        const val TAG = "CsaePrinter"
+    }
 }

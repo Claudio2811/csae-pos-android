@@ -63,17 +63,12 @@ class DispositivoPosActual(private val authStore: AuthStore) {
      * Llamado desde la UI (selector de dispositivo en Configuracion) o desde
      * el reconciliador post-login que matchea el AndroidId del telefono contra
      * la lista de dispositivos del casino.
+     *
+     * Para limpiar la seleccion, pasar los 4 parametros en `null` (esto borra
+     * los 4 campos en DataStore).
      */
-    suspend fun setDispositivo(id: String, nombre: String?, codigo: String?, tipo: Int?) {
+    suspend fun setDispositivo(id: String?, nombre: String?, codigo: String?, tipo: Int?) {
         authStore.setDispositivo(id, nombre, codigo, tipo)
-    }
-
-    /**
-     * Limpia la seleccion. Llamado en logout o cuando el operador quiere
-     * "desvincular" el dispositivo.
-     */
-    suspend fun clearDispositivo() {
-        authStore.clearDispositivo()
     }
 }
 

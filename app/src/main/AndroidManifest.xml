@@ -38,6 +38,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.CsaePos"
         android:usesCleartextTraffic="false"
+        android:extractNativeLibs="false"
         tools:targetApi="33">
         <activity
             android:name=".MainActivity"
@@ -72,6 +73,11 @@
         <meta-data
             android:name="com.google.mlkit.vision.DEPENDENCIES"
             android:value="barcode" />
+
+        <!-- F4.4 (2026-08-13): el <service> net.posprinter.service.PosprinterService
+             fue removido. Volvimos al patron BluetoothSocket + UUID SPP directo,
+             sin SDK vendor. El JAR posprinterconnectandsendsdk.jar ya no se
+             compila ni se declara. -->
     </application>
 
 </manifest>

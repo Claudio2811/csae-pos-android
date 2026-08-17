@@ -4,9 +4,6 @@ import cl.csae.pos.model.Ticket
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 /**
  * Cache en memoria de los tickets generados en el turno.
@@ -28,8 +25,6 @@ class TicketCacheRepository {
         _tickets.value = _tickets.value + ticket
     }
 
-    fun total(): Int = _tickets.value.size
-
     fun montoTotalClp(): Int = _tickets.value.sumOf {
         if (it.precio > 0) it.precio else it.servicio.precio
     }
@@ -38,10 +33,5 @@ class TicketCacheRepository {
 
     fun clear() {
         _tickets.value = emptyList()
-    }
-
-    companion object {
-        val HORA_ACTUAL: String
-            get() = SimpleDateFormat("EEEE d 'de' MMMM, HH:mm", Locale("es", "CL")).format(Date())
     }
 }

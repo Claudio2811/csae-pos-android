@@ -18,6 +18,26 @@ interface PosApiService {
     @POST("api/v1/auth/login")
     suspend fun login(@Body body: LoginRequest): Response<LoginResponseDto>
 
+    /**
+     * F3: perfil completo del usuario autenticado, incluyendo la lista de
+     * sucursales del casino y la lista de casinos (para AdminEmpresa).
+     *
+     * Lo consume el [SucursalSelectScreen] post-login (auto-skip si <=1) y
+     * desde el menu de Configuracion para cambiar manualmente.
+     */
+    @GET("api/v1/auth/me")
+    suspend fun me(): Response<MeResponseDto>
+
+    /**
+     * F3: cambia la sucursal activa del user. Emite un nuevo JWT con el
+     * claim `sucursal_id` actualizado. El cliente debe reemplazar el token
+     * cacheado por el retornado y re-bajar el catalog.
+     */
+    @POST("api/v1/auth/cambiar-sucursal")
+    suspend fun cambiarSucursal(
+        @Body body: CambiarSucursalRequestDto,
+    ): Response<CambiarSucursalResponseDto>
+
     // ============= CASINO TEMA (sprint F16) =============
 
     /**
@@ -37,6 +57,22 @@ interface PosApiService {
 
     @GET("api/v1/pos/comensales/buscar")
     suspend fun buscarComensal(@Query("rut") rut: String): Response<ComensalPosServiciosResponseDto>
+
+    /**
+     * F21 (2026-08-13): endpoint dedicado para refrescar el estado de los
+     * servicios disponibles del comensal. Se llama al seleccionarlo en
+     * POS/Totem y despues de cada ticket, para que el mobile SIEMPRE
+     * vea el estado actual de la BD (no un cache local desincronizado).
+     *
+     * @param rut RUT del comensal (con o sin formato).
+     * @param fecha fecha a consultar en formato ISO yyyy-MM-dd. Si es
+     *              null, el backend usa `DateTime.Today` del server.
+     */
+    @GET("api/v1/pos/comensales/{rut}/servicios-disponibles")
+    suspend fun serviciosDisponibles(
+        @Path("rut") rut: String,
+        @Query("fecha") fecha: String? = null,
+    ): Response<ComensalServiciosDisponiblesResponseDto>
 
     // ============= CONSUMOS =============
 

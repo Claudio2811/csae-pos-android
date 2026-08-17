@@ -15,8 +15,30 @@ android {
         applicationId = "cl.csae.pos"
         minSdk = 26
         targetSdk = 36
-        versionCode = 12
-        versionName = "0.7.4-sprint34-fechas"
+        // F4.5 (2026-08-13): concatenar todos los ByteArrays en un unico
+        // write + delay(150ms) post-flush. El patron anterior (N writes
+        // consecutivos) hacia buffering por write en algunos BluetoothSocket
+        // y la PPT305BT recibia los bytes incompletos o fuera de orden.
+        // Ademas: verificacion de `s.isConnected` antes de escribir.
+        //
+        // F21 (2026-08-13): nuevo endpoint backend
+        // `GET /api/v1/pos/comensales/{rut}/servicios-disponibles?fecha=...`
+        // que el mobile consulta al seleccionar un comensal y despues de
+        // cada ticket. SIEMPRE ve el estado actual de la BD, no el cache
+        // local. El user reporto que seguia viendo servicios ya consumidos.
+        // Cambios mobile:
+        // - PosDtos.kt: nuevo ComensalServiciosDisponiblesResponseDto,
+        //   ServicioDisponibleItemDto, ComensalNoEncontradoResponseDto.
+        // - PosApiService.kt: nuevo metodo `serviciosDisponibles(rut, fecha)`.
+        // - CatalogRepository.kt: nuevo metodo
+        //   `buscarComensalServiciosFrescos(rut, fecha)` que llama al
+        //   endpoint nuevo y sincroniza el cache local.
+        // - TotemScreen.kt y POSScreen.kt: usan el metodo nuevo en vez
+        //   de `buscarComensal` (que usaba cache local).
+        // - ConsumoRepository.kt: despues de un consumo OK, refresca el
+        //   cache del comensal via el endpoint nuevo.
+        versionCode = 24
+        versionName = "0.9.9-f26-rut-errores"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
         // URL del API configurable por buildType.
@@ -50,6 +72,18 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+        // F7+ (2026-08-12): forzar jniLibs no comprimidas (16 KB page-aligned
+        // compatible). AGP 8.5+ ya pone useLegacyPackaging=false por default
+        // para apps targetSdk >= 23, pero lo seteamos explicito para que:
+        // 1. Sea claro en el build file que esto es intencional.
+        // 2. Proteja contra cambios futuros del default.
+        // 3. La verificacion `unzip -l app.apk | grep .so | grep -v Storbed`
+        //    da vacio (todas las .so quedan STORED, no DEFLATED), que es lo
+        //    que Google Play exige a partir de Feb 1 2027 para dispositivos
+        //    con 16 KB page size.
+        jniLibs {
+            useLegacyPackaging = false
         }
     }
     lint {
@@ -122,6 +156,14 @@ dependencies {
     // = ultima estable al 2026-08-02. 16 KB page-aligned (cumple Google
     // Play 16 KB page size requirement, deadline Feb 1 2027).
     implementation("io.coil-kt:coil-compose:2.7.0")
+
+    // F4.4 (2026-08-13): SDK vendor de la impresora REMOVIDO. Volvimos
+    // al patron BluetoothSocket + UUID SPP estandar (ver PrinterService.kt)
+    // que SÍ funciona con la PPT305BT del casino Demo. El SDK vendor
+    // (posprinterconnectandsendsdk.jar) usaba un UUID RFCOMM interno que
+    // no matcheaba con la impresora, por eso connectBtPort retornaba
+    // onfailed. El JAR en app/libs/ ya no se compila (deja de estar en
+    // .gitignore tambien en este commit).
 
     // Tests
     testImplementation("junit:junit:4.13.2")

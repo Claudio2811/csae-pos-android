@@ -42,6 +42,9 @@ object ApiClient {
 
         val client = OkHttpClient.Builder()
             .addInterceptor(authInterceptor)
+            // **Sprint F26 (2026-08-14):** mapea ProblemDetails del backend
+            // a un mensaje legible que el Snackbar puede mostrar al operador.
+            .addInterceptor(ProblemDetailsInterceptor)
             .addInterceptor(logging)
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)

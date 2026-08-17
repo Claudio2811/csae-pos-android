@@ -166,6 +166,77 @@ class CatalogRepository(private val api: PosApiService) {
     }
 
     /**
+     * F21 (2026-08-13): consulta el endpoint `servicios-disponibles` del
+     * backend, que SIEMPRE devuelve el estado actual de la BD (no un
+     * cache local). Pensado para llamarse al seleccionar un comensal en
+     * POS/Totem y despues de cada ticket, asi el mobile SIEMPRE ve el
+     * flag `yaConsumido` correcto.
+     *
+     * Si la API falla (sin red, timeout), retorna el `Comensal` del
+     * cache local como fallback (con el flag `yaConsumido` del cache
+     * local, que puede estar desincronizado). El backend igual valida
+     * la regla unicoPorDia con 409, asi que no es un bug, solo pierde
+     * feedback visual entre reinicios / sin red.
+     *
+     * @param rutInput RUT del comensal (con o sin formato, se normaliza).
+     * @param fecha formato yyyy-MM-dd. Si es null, el backend usa
+     *              DateTime.Today del server.
+     */
+    suspend fun buscarComensalServiciosFrescos(
+        rutInput: String,
+        fecha: String? = null,
+    ): Result<Comensal> {
+        val rutCanonico = rutInput.trim().replace(".", "").replace("-", "").uppercase()
+        return try {
+            val resp = api.serviciosDisponibles(rutCanonico, fecha)
+            if (!resp.isSuccessful) {
+                val msg = parseError(resp.errorBody()?.string(), resp.code())
+                return Result.failure(IllegalStateException(msg))
+            }
+            val data = resp.body() ?: return Result.failure(
+                IllegalStateException("Servicios disponibles vacio.")
+            )
+            val servicios = data.servicios.map { s ->
+                Servicio(
+                    id = s.id,
+                    nombre = s.nombre,
+                    tipo = s.tipo,
+                    precio = s.precioClp,
+                    yaConsumido = s.yaConsumido,
+                )
+            }
+            val consumidosSet = data.servicios
+                .filter { it.yaConsumido }
+                .map { it.id }
+                .toSet()
+            val c = Comensal(
+                id = data.comensalId,
+                membresiaId = data.membresiaId,
+                rut = data.rut,
+                nombre = data.nombreCompleto.substringBefore(" "),
+                apellido = data.nombreCompleto.substringAfter(" ", "").ifEmpty { null },
+                empresa = data.empresaRazonSocial,
+                servicios = servicios,
+                serviciosConsumidosHoy = consumidosSet,
+            )
+            // F21: sincronizar el cache local para que la UI siga
+            // funcionando offline despues de esta llamada. Si falla la
+            // red, el cache local sigue con los valores que tenia.
+            mutex.withLock {
+                val current = consumidosHoy.toMutableMap()
+                current[c.membresiaId] = consumidosSet
+                consumidosHoy = current
+            }
+            Result.success(c)
+        } catch (t: Throwable) {
+            // Fallback: usar el cache local.
+            val fallback = buscarComensal(rutInput)
+            if (fallback != null) Result.success(fallback)
+            else Result.failure(t)
+        }
+    }
+
+    /**
      * F18.2: lista de servicios para un comensal, dados sus servicios habilitados
      * y el catalog. Tambien recibe el set de servicios YA consumidos hoy por
      * este comensal (sacado de `consumidosHoy` por membresiaId) y setea el

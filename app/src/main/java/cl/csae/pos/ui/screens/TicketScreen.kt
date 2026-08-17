@@ -155,15 +155,27 @@ fun TicketScreen(
             val qrBitmap = remember(qrToken) {
                 ServiceLocator.printerService.generarQrBitmap(qrToken, sizePx = 320)
             }
+            // Fix tickets preview (2026-08-12): rediseño del Surface del
+            // ticket termico. Cambios:
+            // - maxWidth 280 -> 320dp (un poco mas ancho, mejor en tablets 10"
+            //   sin perder el ratio de 58mm termico).
+            // - border 1dp #D0D0D0 -> 1.5dp #999999 (visible sobre fondos
+            //   claros, no se pierde).
+            // - shadowElevation 2 -> 6dp (drop shadow notable, el ticket
+            //   "flota" sobre el fondo gris del Scaffold).
+            // - padding interno 14/10 -> 20/16dp (mas aire, no se ve apretado).
+            // - logo 120x48 -> 160x64dp (mas visible en el header).
+            // - colores secundarios #777/#333 -> mas oscuros para contraste.
+            // - QR 160dp -> 180dp (mas facil de escanear desde la pantalla).
             Surface(
-                modifier = Modifier.fillMaxWidth().widthIn(max = 280.dp),
+                modifier = Modifier.fillMaxWidth().widthIn(max = 320.dp),
                 color = Color.White,
-                shape = RoundedCornerShape(2.dp),
-                border = BorderStroke(1.dp, Color(0xFFD0D0D0)),
-                shadowElevation = 2.dp,
+                shape = RoundedCornerShape(4.dp),
+                border = BorderStroke(1.5.dp, Color(0xFF999999)),
+                shadowElevation = 6.dp,
             ) {
                 Column(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp),
                     horizontalAlignment = Alignment.Start,
                 ) {
                     // F18.3: header del casino con logo (si tiene) o texto.
@@ -171,13 +183,13 @@ fun TicketScreen(
                     // logo, CasinoLogoImage cae al csae_logo y el nombre
                     // sigue apareciendo (de casinoTheme o default "CSAE POS").
                     Box(
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
                         contentAlignment = Alignment.Center,
                     ) {
                         CasinoLogoImage(
                             logoUrl = casinoTheme?.logoUrl,
                             contentDescription = casinoTheme?.razonSocial ?: "CSAE",
-                            modifier = Modifier.size(width = 120.dp, height = 48.dp),
+                            modifier = Modifier.size(width = 160.dp, height = 64.dp),
                         )
                     }
                     val casinoNombre = casinoTheme?.razonSocial ?: "CSAE POS"
@@ -185,14 +197,24 @@ fun TicketScreen(
                         casinoNombre,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
+                        fontSize = 18.sp,
                         color = Color.Black,
                         modifier = Modifier.fillMaxWidth(),
                         textAlign = TextAlign.Center,
                     )
                     DivThin()
-                    Text(ticket.fechaHora, fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = Color.Black)
-                    Text("Ticket: ${ticket.numero}", fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = Color.Black)
+                    Text(
+                        ticket.fechaHora,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp,
+                        color = Color.Black,
+                    )
+                    Text(
+                        "Ticket: ${ticket.numero}",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp,
+                        color = Color.Black,
+                    )
                     DivThin()
 
                     // Comensal
@@ -200,32 +222,47 @@ fun TicketScreen(
                         "${ticket.comensal.nombre} ${ticket.comensal.apellido ?: ""}".trim(),
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        color = Color.Black,
+                    )
+                    Text(
+                        "RUT: ${ticket.comensal.rut}",
+                        fontFamily = FontFamily.Monospace,
                         fontSize = 12.sp,
                         color = Color.Black,
                     )
-                    Text("RUT: ${ticket.comensal.rut}", fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = Color.Black)
                     if (ticket.comensal.empresa.isNotEmpty()) {
                         Text(
                             ticket.comensal.empresa,
                             fontFamily = FontFamily.Monospace,
-                            fontSize = 11.sp,
-                            color = Color(0xFF333333),
+                            fontSize = 12.sp,
+                            color = Color(0xFF444444),
                         )
                     }
                     DivThin()
 
                     // Servicio + precio (label/valor)
-                    Text("Servicio: ${ticket.servicio.nombre}", fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = Color.Black)
-                    Text("Tipo: ${ticket.servicio.tipo}", fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = Color(0xFF555555))
+                    Text(
+                        "Servicio: ${ticket.servicio.nombre}",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp,
+                        color = Color.Black,
+                    )
+                    Text(
+                        "Tipo: ${ticket.servicio.tipo}",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp,
+                        color = Color(0xFF333333),
+                    )
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
                             "TOTAL",
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp,
+                            fontSize = 14.sp,
                             color = Color.Black,
                             modifier = Modifier.weight(1f),
                         )
@@ -233,8 +270,8 @@ fun TicketScreen(
                         Text(
                             "$$precioFinal",
                             fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 18.sp,
                             color = Color.Black,
                         )
                     }
@@ -244,8 +281,8 @@ fun TicketScreen(
                     Text(
                         "Operador: ${ticket.operador}",
                         fontFamily = FontFamily.Monospace,
-                        fontSize = 10.sp,
-                        color = Color(0xFF777777),
+                        fontSize = 11.sp,
+                        color = Color(0xFF555555),
                     )
 
                     // QR (si hay)
@@ -258,18 +295,20 @@ fun TicketScreen(
                             Image(
                                 bitmap = bmp.asImageBitmap(),
                                 contentDescription = "QR del ticket",
-                                modifier = Modifier.size(160.dp),
+                                modifier = Modifier.size(180.dp),
                             )
                         }
                         Text(
                             "Escanea para validar",
                             fontFamily = FontFamily.Monospace,
-                            fontSize = 10.sp,
-                            color = Color(0xFF777777),
+                            fontSize = 11.sp,
+                            color = Color(0xFF555555),
                             modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                             textAlign = TextAlign.Center,
                         )
                     }
+                    // Linea punteada final estilo "corte" de impresora termica
+                    DashedDivider()
                 }
             }
 
@@ -312,15 +351,20 @@ fun TicketScreen(
                 showPrinterDialog = false
                 printing = true
                 scope.launch {
-                    // Sprint 3.2: usar imprimirTicketConQr con el qrToken real
-                    // del backend (en ticket.qrToken). Fallback al sintetico si
-                    // el ticket no tiene qrToken (tickets pre-Sprint-3.2).
+                    // F4 (2026-08-13): con el SDK vendor hay que conectar
+                    // ANTES de imprimir. Conectar es idempotente: si ya esta
+                    // conectado, retorna success.
                     val qrToken = ticket.qrToken
                         ?: "CSAE-${ticket.numero}-${ticket.comensal.rut}"
                     // Regeneramos el QR para el PDF con sizePx fijo.
                     val qrBitmap = ServiceLocator.printerService.generarQrBitmap(qrToken, sizePx = 512)
-                    val r = ServiceLocator.printerService.imprimirTicketConQr(
-                        deviceAddress = device.address,
+                    val conn = ServiceLocator.printerService.connectBtPort(device.address)
+                    if (conn.isFailure) {
+                        printing = false
+                        snackbar.showSnackbar("No se pudo conectar a la impresora: ${conn.exceptionOrNull()?.message}")
+                        return@launch
+                    }
+                    val r = ServiceLocator.printerService.imprimirTicket(
                         ticket = ticket,
                         qrToken = qrToken,
                     )
@@ -442,15 +486,35 @@ fun PrinterPickerDialog(
  * Sprint F6 (2026-08-11): separador de linea fina estilo "punteado" para
  * el preview del ticket termico. Reemplaza al viejo `Text("---")` y al
  * HorizontalDivider default de Material3, que es muy grueso y azul
- * (tema). Acá usamos gris claro (#D0D0D0) con 1dp de grosor y un
- * padding vertical de 6dp, igual al espacio entre lineas de una
+ * (tema). Acá usamos gris medio (#999999) con 1dp de grosor y un
+ * padding vertical de 4dp, igual al espacio entre lineas de una
  * impresora termica 58mm.
+ *
+ * Fix tickets preview (2026-08-12): el color subio de #D0D0D0 a #999999
+ * para que el separador sea visible (antes se perdia contra el border
+ * del Surface y el fondo blanco). Padding reducido de 6 a 4dp para que
+ * el ticket no se vea "ventilado" en exceso.
  */
 @Composable
 private fun DivThin() {
     HorizontalDivider(
         thickness = 1.dp,
-        color = Color(0xFFD0D0D0),
-        modifier = Modifier.padding(vertical = 6.dp),
+        color = Color(0xFF999999),
+        modifier = Modifier.padding(vertical = 4.dp),
+    )
+}
+
+/**
+ * Fix tickets preview (2026-08-12): linea punteada al final del ticket
+ * (estilo "------------" de las impresoras termicas antes del corte).
+ * Mas fina y sutil que DivThin para que no compita con el resto del
+ * contenido.
+ */
+@Composable
+private fun DashedDivider() {
+    HorizontalDivider(
+        thickness = 1.dp,
+        color = Color(0xFFAAAAAA),
+        modifier = Modifier.padding(top = 8.dp, bottom = 2.dp),
     )
 }

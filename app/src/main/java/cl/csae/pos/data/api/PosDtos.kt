@@ -72,6 +72,46 @@ data class ServicioPosItemDto(
     val tipo: String,
     val precio: Int,
     val precioIva: Int,
+    // F21 (2026-08-13): flag `yaConsumido` del backend (F18.1, lo calcula
+    // contra los consumos del dia para esta membresia). Default false
+    // para compatibilidad con backends viejos.
+    val yaConsumido: Boolean = false,
+)
+
+// ============= F21: SERVICIOS DISPONIBLES =============
+// Endpoint dedicado `GET /api/v1/pos/comensales/{rut}/servicios-disponibles?fecha=YYYY-MM-DD`.
+// Pensado para llamarse al seleccionar comensal y despues de cada ticket,
+// asi el mobile SIEMPRE ve el estado actual de la BD (no un cache local
+// desincronizado).
+
+@Serializable
+data class ServicioDisponibleItemDto(
+    val id: String,
+    val nombre: String,
+    val tipo: String,
+    val precioClp: Int,
+    val yaConsumido: Boolean,
+    val consumosHoy: Int = 0,
+)
+
+@Serializable
+data class ComensalServiciosDisponiblesResponseDto(
+    val comensalId: String,
+    val membresiaId: String,
+    val nombreCompleto: String,
+    val rut: String,
+    val empresaRazonSocial: String,
+    val empresaRut: String? = null,
+    val fecha: String,  // ISO yyyy-MM-dd
+    val totalServicios: Int,
+    val totalDisponibles: Int,
+    val servicios: List<ServicioDisponibleItemDto>,
+)
+
+@Serializable
+data class ComensalNoEncontradoResponseDto(
+    val error: String,
+    val sugerencia: String? = null,
 )
 
 // ============= CONSUMO =============
