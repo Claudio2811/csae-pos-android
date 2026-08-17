@@ -1,9 +1,26 @@
 // app/build.gradle.kts
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
+}
+
+// F53d (2026-08-17): carga keystore.properties para configurar la firma de
+// release. El archivo esta en .gitignore (NO commitear passwords).
+// Si NO existe (CI sin secrets, o build sin firma), usamos una firma debug
+// placeholder y el build NO falla. Esto permite builds locales sin keystore
+// para validar que el codigo compila.
+val keystoreProperties = Properties().apply {
+    val f = rootProject.file("app/keystore.properties")
+    if (f.exists()) {
+        load(FileInputStream(f))
+    } else {
+        logger.warn("app/keystore.properties no existe. La firma de release usara la debug keystore (NO recomendada para prod).")
+    }
 }
 
 android {
@@ -45,10 +62,44 @@ android {
         buildConfigField("String", "API_BASE_URL", "\"https://csae-dev-api.azurewebsites.net/\"")
     }
 
+    // F53d (2026-08-17): signing config de release, leida de keystore.properties.
+    // Se declara ANTES de buildTypes porque el DSL de AGP evalua en orden y
+    // buildTypes.release.signingConfig referencia signingConfigs.getByName("release").
+    signingConfigs {
+        create("release") {
+            if (rootProject.file("app/keystore.properties").exists()) {
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+                // storeFile es path RELATIVO a app/ (donde esta el build.gradle.kts).
+                // Tipico: keystore/csae-pos-release.keystore.
+                val storeFileRel = keystoreProperties.getProperty("storeFile")
+                if (storeFileRel != null) {
+                    storeFile = file(storeFileRel)
+                }
+                storePassword = keystoreProperties.getProperty("storePassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // F53c (2026-08-17): habilitar R8 minify + shrink resources.
+            // Antes isMinifyEnabled=false -> APK release pesaba ~22MB
+            // (igual que debug). Con minify+shrink baja a ~10-12MB y
+            // obfuscate protege contra decompile trivial. Las reglas
+            // estan en app/proguard-rules.pro.
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // F53d (2026-08-17): firmar con el keystore de release si
+            // keystore.properties existe. Si no, fallback a la debug
+            // keystore (util para CI que valida que el codigo compila
+            // sin necesidad del secret).
+            signingConfig = if (rootProject.file("app/keystore.properties").exists()) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
         debug {
             isMinifyEnabled = false

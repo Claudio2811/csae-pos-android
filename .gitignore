@@ -35,3 +35,7 @@ gradle/daemon/
 gradle/kotlin-profile/
 gradle/native/
 gradle/wrapper/dists/
+
+# F53d: keystore release (NO commitear)
+app/keystore/
+app/keystore.properties
