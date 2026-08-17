@@ -54,8 +54,10 @@ android {
         //   de `buscarComensal` (que usaba cache local).
         // - ConsumoRepository.kt: despues de un consumo OK, refresca el
         //   cache del comensal via el endpoint nuevo.
-        versionCode = 24
-        versionName = "0.9.9-f26-rut-errores"
+        versionCode = 25
+        // F55 + F55b (auto-imprimir) + fix ModeSelect (F48 roles) + F53c/d
+        // (R8 minify + release signing).
+        versionName = "0.9.13-f55-mobile-harden"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
         // URL del API configurable por buildType.
