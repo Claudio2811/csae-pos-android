@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -35,22 +36,31 @@ import kotlinx.coroutines.flow.map
  * para que la app aplique el tema del casino actual (F16) sin pegarle al
  * backend en cada render. Los valores se persisten al hacer login (via
  * AuthRepository.saveCasinoTheme) y se limpian al logout.
+ *
+ * **Sprint F56 (2026-08-17):** se agrega [KEY_TOKEN_EXPIRES_AT] (timestamp
+ * Unix en millis) para que el cliente pueda hacer refresh proactivo del
+ * JWT ANTES de que expire (5 min antes). El backend ya expone
+ * `POST /api/v1/auth/refresh` que toma un token (incluso expirado) y emite
+ * uno nuevo sin pedir password. Asi evitamos que el 96% de los requests
+ * del mobile terminen en 401 (ver reporte Azure 2026-08-17). El
+ * [AuthRepository] corre una coroutine en background que chequea este
+ * timestamp cada 60s.
  */
 private val Context.authDataStore by preferencesDataStore(name = "csae_pos_auth")
 
-class AuthStore(private val context: Context) {
+class AuthStore(private val context: Context) : IAuthStore {
 
-    val token: Flow<String?> = context.authDataStore.data.map { it[KEY_TOKEN] }
-    val email: Flow<String?> = context.authDataStore.data.map { it[KEY_EMAIL] }
-    val displayName: Flow<String?> = context.authDataStore.data.map { it[KEY_NAME] }
-    val rol: Flow<String?> = context.authDataStore.data.map { it[KEY_ROL] }
-    val restauranteId: Flow<String?> = context.authDataStore.data.map { it[KEY_RESTAURANTE] }
+    override val token: Flow<String?> = context.authDataStore.data.map { it[KEY_TOKEN] }
+    override val email: Flow<String?> = context.authDataStore.data.map { it[KEY_EMAIL] }
+    override val displayName: Flow<String?> = context.authDataStore.data.map { it[KEY_NAME] }
+    override val rol: Flow<String?> = context.authDataStore.data.map { it[KEY_ROL] }
+    override val restauranteId: Flow<String?> = context.authDataStore.data.map { it[KEY_RESTAURANTE] }
     /**
      * F3: sucursal activa del OperadorPos. Persiste entre sesiones (igual
      * que restauranteId). null = "casino completo" (cuando el casino no
      * tiene sucursales o el user eligio "ver todo el casino").
      */
-    val sucursalId: Flow<String?> = context.authDataStore.data.map { it[KEY_SUCURSAL] }
+    override val sucursalId: Flow<String?> = context.authDataStore.data.map { it[KEY_SUCURSAL] }
     val modoPreferido: Flow<String?> = context.authDataStore.data.map { it[KEY_MODO_PREFERIDO] }
 
     /**
@@ -68,12 +78,12 @@ class AuthStore(private val context: Context) {
     val autoImprimirTickets: Flow<Boolean> = context.authDataStore.data.map { it[KEY_AUTO_IMPRIMIR] ?: false }
 
     // ===== F16: Tema del casino actual =====
-    val casinoId: Flow<String?> = context.authDataStore.data.map { it[KEY_CASINO_ID] }
-    val casinoNombre: Flow<String?> = context.authDataStore.data.map { it[KEY_CASINO_NOMBRE] }
-    val casinoRut: Flow<String?> = context.authDataStore.data.map { it[KEY_CASINO_RUT] }
-    val casinoColorPrimario: Flow<String?> = context.authDataStore.data.map { it[KEY_CASINO_COLOR_PRIMARIO] }
-    val casinoColorAcento: Flow<String?> = context.authDataStore.data.map { it[KEY_CASINO_COLOR_ACENTO] }
-    val casinoLogoUrl: Flow<String?> = context.authDataStore.data.map { it[KEY_CASINO_LOGO_URL] }
+    override val casinoId: Flow<String?> = context.authDataStore.data.map { it[KEY_CASINO_ID] }
+    override val casinoNombre: Flow<String?> = context.authDataStore.data.map { it[KEY_CASINO_NOMBRE] }
+    override val casinoRut: Flow<String?> = context.authDataStore.data.map { it[KEY_CASINO_RUT] }
+    override val casinoColorPrimario: Flow<String?> = context.authDataStore.data.map { it[KEY_CASINO_COLOR_PRIMARIO] }
+    override val casinoColorAcento: Flow<String?> = context.authDataStore.data.map { it[KEY_CASINO_COLOR_ACENTO] }
+    override val casinoLogoUrl: Flow<String?> = context.authDataStore.data.map { it[KEY_CASINO_LOGO_URL] }
 
     // ===== F19: Dispositivo POS seleccionado =====
     // A diferencia del casino y la sucursal (que viven en el JWT), el dispositivo
@@ -81,12 +91,12 @@ class AuthStore(private val context: Context) {
     // Se persiste en DataStore (equivalente al localStorage de la web) y vive
     // en memoria via DispositivoPosActual (singleton en ServiceLocator).
     // El patron es el mismo que la web: DispositivoPosActual.cs (Sprint 5.4).
-    val dispositivoId: Flow<String?> = context.authDataStore.data.map { it[KEY_DISPOSITIVO_ID] }
-    val dispositivoNombre: Flow<String?> = context.authDataStore.data.map { it[KEY_DISPOSITIVO_NOMBRE] }
-    val dispositivoCodigo: Flow<String?> = context.authDataStore.data.map { it[KEY_DISPOSITIVO_CODIGO] }
-    val dispositivoTipo: Flow<Int?> = context.authDataStore.data.map { it[KEY_DISPOSITIVO_TIPO] }
+    override val dispositivoId: Flow<String?> = context.authDataStore.data.map { it[KEY_DISPOSITIVO_ID] }
+    override val dispositivoNombre: Flow<String?> = context.authDataStore.data.map { it[KEY_DISPOSITIVO_NOMBRE] }
+    override val dispositivoCodigo: Flow<String?> = context.authDataStore.data.map { it[KEY_DISPOSITIVO_CODIGO] }
+    override val dispositivoTipo: Flow<Int?> = context.authDataStore.data.map { it[KEY_DISPOSITIVO_TIPO] }
 
-    suspend fun getToken(): String? = context.authDataStore.data.first()[KEY_TOKEN]
+    override suspend fun getToken(): String? = context.authDataStore.data.first()[KEY_TOKEN]
 
     suspend fun getModoPreferido(): String? = context.authDataStore.data.first()[KEY_MODO_PREFERIDO]
 
@@ -105,13 +115,24 @@ class AuthStore(private val context: Context) {
      */
     suspend fun getLastSeenVersionCode(): Int = context.authDataStore.data.first()[KEY_VERSION_CODE] ?: 0
 
-    suspend fun save(
+    /**
+     * **F56 (2026-08-17):** lee el timestamp Unix (millis) en que expira el
+     * JWT actual. `null` si nunca hubo login o si el campo no esta
+     * persistido (ej: sesion heredada de una version anterior a F56).
+     *
+     * El [AuthRepository] lo usa para correr un refresh proactivo 5 min
+     * antes de la expiracion.
+     */
+    override suspend fun getTokenExpiresAt(): Long? = context.authDataStore.data.first()[KEY_TOKEN_EXPIRES_AT]
+
+    override suspend fun save(
         token: String,
         email: String,
         displayName: String,
         rol: String,
         restauranteId: String?,
-        sucursalId: String? = null,
+        sucursalId: String?,
+        expiresAt: Long?,
     ) {
         context.authDataStore.edit { prefs ->
             prefs[KEY_TOKEN] = token
@@ -123,6 +144,11 @@ class AuthStore(private val context: Context) {
             // la persistimos. Si es null, NO borramos la anterior — eso lo
             // hace `setSucursal(null)` cuando el user elige "casino completo".
             if (sucursalId != null) prefs[KEY_SUCURSAL] = sucursalId
+            // F56: persistir el timestamp de expiracion (millis Unix) para
+            // que el refresh proactivo pueda decidir cuando renovar. Si
+            // llega null, NO borramos el anterior (caso del cambiar-sucursal
+            // que reusa el mismo timestamp).
+            if (expiresAt != null) prefs[KEY_TOKEN_EXPIRES_AT] = expiresAt
         }
     }
 
@@ -132,7 +158,7 @@ class AuthStore(private val context: Context) {
      * el SucursalSelectScreen si el user quiere volver a "casino completo"
      * (pasando null).
      */
-    suspend fun setSucursal(sucursalId: String?) {
+    override suspend fun setSucursal(sucursalId: String?) {
         context.authDataStore.edit { prefs ->
             if (sucursalId == null) prefs.remove(KEY_SUCURSAL)
             else prefs[KEY_SUCURSAL] = sucursalId
@@ -150,7 +176,7 @@ class AuthStore(private val context: Context) {
      * alpha) segun F14 fix. Si el casino no tiene logo, [casinoLogoUrl]
      * queda en null y la UI usa el logo del producto (CSAE) como fallback.
      */
-    suspend fun saveCasinoTheme(
+    override suspend fun saveCasinoTheme(
         casinoId: String,
         casinoNombre: String,
         casinoRut: String?,
@@ -216,7 +242,7 @@ class AuthStore(private val context: Context) {
      * queremos un clearSesion() que NO borre preferencias de UI (tema,
      * idioma, etc).
      */
-    suspend fun clearSesion() {
+    override suspend fun clearSesion() {
         clear()
     }
 
@@ -228,7 +254,7 @@ class AuthStore(private val context: Context) {
      *
      * Si los parametros son null, se borran los 4 campos.
      */
-    suspend fun setDispositivo(
+    override suspend fun setDispositivo(
         id: String?,
         nombre: String?,
         codigo: String?,
@@ -249,8 +275,24 @@ class AuthStore(private val context: Context) {
         }
     }
 
-    suspend fun clear() {
+    override suspend fun clear() {
         context.authDataStore.edit { it.clear() }
+    }
+
+    /**
+     * **F56 (2026-08-17):** actualiza SOLO el JWT + el timestamp de
+     * expiracion. NO toca email, rol, restaurante, sucursal, casino, etc.
+     * Es la operacion que llama el [AuthRepository] despues de un
+     * `POST /api/v1/auth/refresh` exitoso.
+     *
+     * Mantener el resto del DataStore intacto es importante porque la
+     * sesion del operador sigue siendo valida — solo se renovo el token.
+     */
+    override suspend fun saveTokenOnly(token: String, expiresAt: Long) {
+        context.authDataStore.edit { prefs ->
+            prefs[KEY_TOKEN] = token
+            prefs[KEY_TOKEN_EXPIRES_AT] = expiresAt
+        }
     }
 
     private companion object {
@@ -278,5 +320,8 @@ class AuthStore(private val context: Context) {
         val KEY_DISPOSITIVO_NOMBRE = stringPreferencesKey("dispositivo_nombre")
         val KEY_DISPOSITIVO_CODIGO = stringPreferencesKey("dispositivo_codigo")
         val KEY_DISPOSITIVO_TIPO = intPreferencesKey("dispositivo_tipo")
+        // F56: timestamp Unix (millis) en que expira el JWT actual. Se usa
+        // para correr refresh proactivo en background.
+        val KEY_TOKEN_EXPIRES_AT = longPreferencesKey("token_expires_at")
     }
 }

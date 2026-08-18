@@ -1,4 +1,4 @@
-// app/build.gradle.kts
+﻿// app/build.gradle.kts
 import java.io.FileInputStream
 import java.util.Properties
 
@@ -54,9 +54,9 @@ android {
         //   de `buscarComensal` (que usaba cache local).
         // - ConsumoRepository.kt: despues de un consumo OK, refresca el
         //   cache del comensal via el endpoint nuevo.
-        versionCode = 26
+        versionCode = 27
         // F55c: auto-imprimir tambien en modo Totem (kiosko).
-        versionName = "0.9.14-f55c-totem-autoprint"
+        versionName = "0.9.15-f56-auth-refresh"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
         // URL del API configurable por buildType.
@@ -191,7 +191,7 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:1.4.0")
     implementation("androidx.camera:camera-view:1.4.0")
 
-    // ML Kit barcode scanning — variante UNBUNDLED (play-services-mlkit).
+    // ML Kit barcode scanning â€” variante UNBUNDLED (play-services-mlkit).
     // Antes usabamos com.google.mlkit:barcode-scanning:17.3.0 (bundled) que
     // incluye libbarhopper_v3.so en el APK con LOAD segments a 4 KB.
     // La variante unbundled descarga el modelo desde Google Play Services en
@@ -211,7 +211,7 @@ dependencies {
 
     // F4.4 (2026-08-13): SDK vendor de la impresora REMOVIDO. Volvimos
     // al patron BluetoothSocket + UUID SPP estandar (ver PrinterService.kt)
-    // que SÍ funciona con la PPT305BT del casino Demo. El SDK vendor
+    // que SÃ funciona con la PPT305BT del casino Demo. El SDK vendor
     // (posprinterconnectandsendsdk.jar) usaba un UUID RFCOMM interno que
     // no matcheaba con la impresora, por eso connectBtPort retornaba
     // onfailed. El JAR en app/libs/ ya no se compila (deja de estar en
@@ -219,6 +219,14 @@ dependencies {
 
     // Tests
     testImplementation("junit:junit:4.13.2")
+    // F56 (2026-08-17): MockWebServer para tests del TokenAuthenticator
+    // y AuthRepository.refreshToken. 4.12.0 = misma version que OkHttp
+    // de runtime, asi que las clases internas (Challenge, Handshake) son
+    // compatibles.
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    // F56: coroutines-test para `runTest` y `TestScope` en los tests
+    // del refresh proactivo del AuthRepository.
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.1")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
