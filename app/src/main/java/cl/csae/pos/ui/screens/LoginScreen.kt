@@ -51,6 +51,13 @@ import kotlinx.coroutines.launch
  *   - Loading state con CircularProgressIndicator + texto descriptivo.
  *   - Version del app + endpoint API en el footer (info tecnica sutil).
  *   - Espaciado mas generoso y consistente.
+ *
+ * Sprint F56 (2026-08-17): observa el [ServiceLocator.sessionExpiredEvent].
+ * Si el refresh del JWT falla (porque el backend rechazo el token), el
+ * AuthRepository emite ese evento y la pantalla pre-llena el email con el
+ * del ultimo login, limpia el password, y muestra un mensaje suave
+ * "Tu sesion expiro. Vuelve a iniciar sesion." Asi el operador solo
+ * tiene que escribir el password — no el email de nuevo.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -67,6 +74,23 @@ fun LoginScreen(
 
     val casinoTheme by ServiceLocator.authRepo.currentCasinoTheme
         .collectAsState(initial = null)
+
+    // F56: observar el evento de sesion expirada. Cuando llega un Unit,
+    // pre-llenamos el email con el del ultimo login (si lo hay), limpiamos
+    // el password, y mostramos un mensaje suave. El operador solo tiene
+    // que escribir el password.
+    val sessionExpiredEvent = ServiceLocator.sessionExpiredEvent
+    LaunchedEffect(Unit) {
+        sessionExpiredEvent.collect {
+            val lastEmail = ServiceLocator.authRepo.getLastEmail()
+            if (!lastEmail.isNullOrBlank()) {
+                usuario = lastEmail
+            }
+            password = ""
+            loading = false
+            error = "Tu sesion expiro. Vuelve a iniciar sesion."
+        }
+    }
 
     val usuarioError: String? = when {
         usuario.isBlank() -> null

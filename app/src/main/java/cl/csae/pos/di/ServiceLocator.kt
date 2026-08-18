@@ -4,6 +4,8 @@ import android.content.Context
 import cl.csae.pos.BuildConfig
 import cl.csae.pos.data.api.ApiClient
 import cl.csae.pos.data.api.PosApiService
+import cl.csae.pos.data.api.RefreshTokenResponse
+import cl.csae.pos.data.api.TokenAuthenticator
 import cl.csae.pos.data.bluetooth.PrinterService
 import cl.csae.pos.data.prefs.AuthStore
 import cl.csae.pos.data.repository.AuthRepository
@@ -16,6 +18,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 /**
  * ServiceLocator: punto unico de acceso a las dependencias de la app.
@@ -50,15 +53,68 @@ object ServiceLocator {
 
     val authStore: AuthStore by lazy { AuthStore(appContext) }
 
+    val authRepo: AuthRepository by lazy {
+        AuthRepository(posApiService, authStore, dispositivoPosActual, appContext)
+    }
+
+    /**
+     * F56: alias publico del [AuthRepository.sessionExpired] para que la
+     * UI (LoginScreen) lo observe con un path corto. Es un SharedFlow
+     * (no StateFlow) — solo emite eventos cuando la sesion expira; no
+     * tiene valor "inicial" que chequear.
+     */
+    val sessionExpiredEvent get() = authRepo.sessionExpired
+
+    /**
+     * F56: ApiClient con TokenAuthenticator que, en caso de 401, llama a
+     * `authRepo.refreshToken()` para obtener un JWT nuevo y reintentar
+     * el request original.
+     *
+     * **Orden de inicializacion (lazy):** `posApiService` depende del
+     * `authRepo` (vía el lambda `refreshProvider`), pero el `authRepo`
+     * depende del `posApiService` (parametro del constructor). Esto NO
+     * es un ciclo: ambos son `by lazy` y la primera vez que se accede a
+     * uno, el otro ya esta inicializado (o se inicializa al toque). La
+     * clave es que el lambda `refreshProvider` se evalua DENTRO del
+     * authenticator, en el momento del 401, NO en la construccion.
+     *
+     * El `onSessionExpired` se cablea a `authRepo` también por lazy, asi
+     * que cuando el authenticator lo invoca, ambos ya estan vivos.
+     */
     val posApiService: PosApiService by lazy {
+        val authenticator = TokenAuthenticator(
+            jwtProvider = { authRepo.jwtProvider() },
+            refreshProvider = { currentToken ->
+                // runBlocking porque OkHttp Authenticator no es suspend.
+                // Se ejecuta en el thread pool de OkHttp (no en main).
+                runBlocking { authRepo.refreshToken() }
+                    .map { it as RefreshTokenResponse }
+            },
+            onSessionExpired = {
+                // El authenticator corrio y no pudo refrescar. Avisamos al
+                // repo para que emita el evento a la UI. Tambien lo hace
+                // refreshToken() en el camino de failure, pero por si
+                // llegamos aca sin pasar por ahi (ej: token ya era null).
+                applicationScope.launch {
+                    try {
+                        // Si el operador ya estaba deslogueado, no pasa
+                        // nada. Si no, esto dispara el evento.
+                        if (authRepo.jwtProvider() != null) {
+                            // Forzamos el emit: refreshToken() ya fallo,
+                            // pero queremos que la UI reaccione.
+                            // authRepo.refreshToken() emite el evento por
+                            // su cuenta, asi que llamamos al mismo.
+                            authRepo.refreshToken()
+                        }
+                    } catch (_: Throwable) { /* swallow */ }
+                }
+            },
+        )
         ApiClient.build(
             baseUrl = BuildConfig.API_BASE_URL,
             jwtProvider = { authRepo.jwtProvider() },
+            tokenAuthenticator = authenticator,
         )
-    }
-
-    val authRepo: AuthRepository by lazy {
-        AuthRepository(posApiService, authStore, dispositivoPosActual, appContext)
     }
 
     val catalogRepo: CatalogRepository by lazy { CatalogRepository(posApiService) }

@@ -38,6 +38,24 @@ interface PosApiService {
         @Body body: CambiarSucursalRequestDto,
     ): Response<CambiarSucursalResponseDto>
 
+    /**
+     * **F56 (2026-08-17):** refresca el JWT sin pedir password. Acepta un
+     * token (incluso expirado, siempre que la firma sea valida) y emite
+     * uno nuevo con la misma identidad + claims.
+     *
+     * Es el endpoint que consume el [TokenAuthenticator] cuando OkHttp
+     * recibe un 401: llama aca, reemplaza el JWT cacheado, y reintenta
+     * el request original con el token nuevo.
+     *
+     * Tambien lo consume el refresh proactivo del [cl.csae.pos.data.repository.AuthRepository]:
+     * si el JWT esta a <5 min de expirar, pega aca para renovarlo antes
+     * de que el operador meta un 401 accidental.
+     *
+     * Backend: `CSAE.Api` branch `main` commit `fa593ce`.
+     */
+    @POST("api/v1/auth/refresh")
+    suspend fun refresh(@Body body: RefreshTokenRequest): Response<RefreshTokenResponse>
+
     // ============= CASINO TEMA (sprint F16) =============
 
     /**

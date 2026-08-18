@@ -1,6 +1,6 @@
 package cl.csae.pos.data.selection
 
-import cl.csae.pos.data.prefs.AuthStore
+import cl.csae.pos.data.prefs.IAuthStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -35,7 +35,7 @@ import kotlinx.coroutines.flow.stateIn
  * SignalR; en Android, es para tener una sola fuente de verdad y
  * evitar pasar el dato por parametro entre componentes.
  */
-class DispositivoPosActual(private val authStore: AuthStore) {
+class DispositivoPosActual(private val authStore: IAuthStore) {
 
     /**
      * Snapshot actual del dispositivo POS seleccionado.

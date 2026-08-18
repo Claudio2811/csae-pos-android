@@ -9,22 +9,32 @@ import cl.csae.pos.data.api.CasinoThemeDto
 import cl.csae.pos.data.api.LoginRequest
 import cl.csae.pos.data.api.MeResponseDto
 import cl.csae.pos.data.api.PosApiService
+import cl.csae.pos.data.api.RefreshTokenRequest
+import cl.csae.pos.data.api.RefreshTokenResponse
 import cl.csae.pos.data.api.SucursalDto
-import cl.csae.pos.data.prefs.AuthStore
+import cl.csae.pos.data.prefs.IAuthStore
 import cl.csae.pos.data.selection.DispositivoPosActual
 import cl.csae.pos.model.UsuarioPos
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
+import java.time.Instant
+import java.time.format.DateTimeParseException
 
 /**
  * Auth: login contra la API + persistencia del JWT.
@@ -58,18 +68,49 @@ import kotlinx.serialization.json.Json
  *   el JWT cacheado por el nuevo (que lleva el claim `sucursal_id`
  *   actualizado), persiste en DataStore, y devuelve el [MeResponseDto] para
  *   que el caller actualice la UI.
+ *
+ * **Sprint F56 (2026-08-17):** auto-refresh del JWT.
+ * - [refreshToken] llama a `POST /api/v1/auth/refresh` con el JWT actual
+ *   (incluso si ya expiro) y obtiene uno nuevo. Si el backend responde OK,
+ *   reemplaza el cache en memoria y el DataStore (vía [AuthStore.saveTokenOnly]).
+ *   Si falla, emite [SessionExpiredEvent] para que la UI (LoginScreen)
+ *   muestre el formulario otra vez, y limpia la sesion.
+ * - [startProactiveRefresh] arranca una coroutine en background que
+ *   chequea el timestamp de expiracion cada 60s. Si el JWT esta a
+ *   <5 min de expirar, dispara [refreshToken] preventivamente. Asi el
+ *   operador no nota la renovacion (no ve 401 transitorios).
+ * - El [cl.csae.pos.data.api.TokenAuthenticator] (OkHttp `Authenticator`)
+ *   es el segundo frente: si llega un 401 de todos modos (ej: el JWT
+ *   vencio justo entre chequeos), OkHttp invoca el authenticator, que
+ *   llama a [refreshToken] y reintenta el request original.
  */
 class AuthRepository(
     private val api: PosApiService,
-    private val authStore: AuthStore,
+    private val authStore: IAuthStore,
     private val dispositivoPosActual: DispositivoPosActual,
-    private val appContext: Context,
+    private val appContext: Context?,
 ) {
     private val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
 
     @Volatile private var jwtCache: String? = null
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    /**
+     * F56: Evento que la UI (LoginScreen) observa para mostrar el form
+     * otra vez cuando el refresh falla. Replay=0 porque solo nos interesa
+     * el evento futuro (no re-emitir al rotar el composable). Buffer=16
+     * para tolerar collectors lentos sin perder eventos.
+     */
+    private val _sessionExpired = MutableSharedFlow<Unit>(replay = 0, extraBufferCapacity = 16)
+    val sessionExpired: SharedFlow<Unit> = _sessionExpired.asSharedFlow()
+
+    /**
+     * F56: job del refresh proactivo. Vive en el [scope] de la instancia
+     * (no del composable). Se cancela en [stopProactiveRefresh] /
+     * [logout].
+     */
+    private var proactiveRefreshJob: Job? = null
 
     // F3: cache en memoria de las sucursales del casino. Se popula via
     // [me] y se limpia en [logout] (via [resetSession] en ServiceLocator).
@@ -85,6 +126,17 @@ class AuthRepository(
 
     /** Provider del JWT actual, para pasarselo al `ApiClient.build`. */
     val jwtProvider: () -> String? = { jwtCache ?: runBlocking { authStore.getToken() } }
+
+    /**
+     * **F56 (2026-08-17):** setter de `jwtCache` solo para tests. La
+     * forma de uso normal es via [login] (que setea el cache despues
+     * del 200) o [refreshToken] (idem). Los tests unitarios lo usan
+     * para simular un operador ya logueado sin tener que pasar por
+     * todo el flujo de login.
+     */
+    internal fun setJwtCacheForTest(token: String?) {
+        jwtCache = token
+    }
 
     /**
      * F3: perfil del usuario incluyendo la sucursalId activa (del DataStore,
@@ -174,6 +226,8 @@ class AuthRepository(
             // F3: si el login devuelve una sucursal default, la persistimos.
             // Si es null, NO borramos la anterior (eso lo hace setSucursal(null)
             // cuando el user elige "casino completo" en el selector).
+            // F56: parsear expiresAt ISO 8601 -> millis Unix y persistir.
+            val expiresAtMillis = parseExpiresAtToMillis(body.expiresAt)
             authStore.save(
                 token = body.token,
                 email = body.email,
@@ -181,6 +235,7 @@ class AuthRepository(
                 rol = body.rol,
                 restauranteId = body.restauranteId,
                 sucursalId = body.sucursalId,
+                expiresAt = expiresAtMillis,
             )
             jwtCache = body.token
 
@@ -228,6 +283,14 @@ class AuthRepository(
             // No fatal si falla — el operador puede elegir manualmente.
             reconciliarDispositivoPos()
 
+            // F56: arrancar el refresh proactivo en background. Solo si
+            // pudimos parsear el expiresAt del login (si no, no hay forma
+            // de saber cuando renovar y queda en manos del TokenAuthenticator
+            // reactivo).
+            if (expiresAtMillis != null) {
+                startProactiveRefresh()
+            }
+
             Result.success(
                 UsuarioPos(
                     username = body.email,
@@ -244,8 +307,12 @@ class AuthRepository(
     }
 
     suspend fun logout() {
+        // F56: parar el refresh proactivo (si estaba corriendo). El
+        // cancel es no-op si el job ya termino.
+        stopProactiveRefresh()
         // Sprint F16: clear() ya limpia todos los campos del DataStore,
         // incluyendo los de casino (casinoId, colorPrimario, etc).
+        // F56: clear() tambien limpia KEY_TOKEN_EXPIRES_AT.
         authStore.clear()
         jwtCache = null
         // F3: limpiar la cache de sucursales para que el proximo login
@@ -319,8 +386,13 @@ class AuthRepository(
      */
     private suspend fun reconciliarDispositivoPos() {
         try {
+            // F56 (2026-08-18): appContext es nullable para tests
+            // (la interfaz AuthRepository era testeable pero el Context
+            // no lo es sin Robolectric). Si no hay context, saltamos
+            // la reconciliacion — el operador puede elegir manualmente.
+            val ctx = appContext ?: return
             val androidId = Settings.Secure.getString(
-                appContext.contentResolver,
+                ctx.contentResolver,
                 Settings.Secure.ANDROID_ID,
             )
             if (androidId.isNullOrBlank()) return
@@ -376,6 +448,170 @@ class AuthRepository(
         }
     }
 
+    /**
+     * **F56 (2026-08-17):** refresca el JWT actual contra el backend.
+     *
+     * Flujo:
+     * 1. Lee el token actual del `jwtCache` en memoria. Si esta null, falla
+     *    con un error claro.
+     * 2. Llama a `POST /api/v1/auth/refresh` con ese token.
+     * 3. Si el backend responde 200 OK: reemplaza el `jwtCache`,
+     *    persiste el nuevo token + timestamp de expiracion en [AuthStore]
+     *    (vía [AuthStore.saveTokenOnly], que NO toca el resto del estado
+     *    del operador).
+     * 4. Si falla (4xx, 5xx, IOException): emite [SessionExpiredEvent] y
+     *    limpia la sesion. La UI (LoginScreen) observa ese evento y
+     *    muestra el form otra vez.
+     *
+     * Es seguro llamar a esta funcion desde el [TokenAuthenticator]
+     * (que corre en un thread de OkHttp con `runBlocking`) o desde la
+     * coroutine del refresh proactivo: la unica escritura sincronica al
+     * cache es `jwtCache = newToken` (volatile), el resto son suspend.
+     */
+    suspend fun refreshToken(): Result<RefreshTokenResponse> {
+        val currentToken = jwtCache
+        if (currentToken.isNullOrBlank()) {
+            // Sin token, no hay nada que refrescar. Emite el evento igual:
+            // si el operador esta en la app, lo devolvemos al login.
+            emitSessionExpired()
+            return Result.failure(IllegalStateException("No hay token para refrescar."))
+        }
+        return try {
+            val resp = api.refresh(RefreshTokenRequest(currentToken))
+            if (!resp.isSuccessful) {
+                val code = resp.code()
+                // 4xx: token invalido (firma rota, etc). Es error del cliente
+                // y no se va a resolver solo. Sesion expirada para el operador.
+                // 5xx: backend caido / blip. Es transitorio. NO emitir
+                // session expired — el siguiente retry del refresh proactivo
+                // lo intentara de nuevo. El TokenAuthenticator (que corre en
+                // paralelo por cada request) va a devolver el 5xx al operador
+                // si el problema persiste, y ahi la UI va a mostrar el
+                // error concreto.
+                if (code in 400..499) {
+                    emitSessionExpired()
+                }
+                val msg = parseError(resp.errorBody()?.string(), code)
+                return Result.failure(IllegalStateException(msg))
+            }
+            val body = resp.body() ?: run {
+                emitSessionExpired()
+                return Result.failure(IllegalStateException("Respuesta vacia del API."))
+            }
+            val expiresAtMillis = parseExpiresAtToMillis(body.expiresAt)
+            if (expiresAtMillis == null) {
+                // El backend nos devolvio un expiresAt que no pudimos parsear.
+                // Logico seguir (el token funciona) pero sin refresh proactivo.
+                // No emitimos session expired porque el token SIRVE.
+            } else {
+                authStore.saveTokenOnly(body.token, expiresAtMillis)
+            }
+            // Reemplazar el cache en memoria (volatile) — los interceptors
+            // y el TokenAuthenticator lo leen en cada request.
+            jwtCache = body.token
+            Result.success(body)
+        } catch (t: Throwable) {
+            // IOException, timeout, etc. NO emitimos session expired porque
+            // podria ser un blip transitorio (backend reiniciandose, red
+            // intermitente). El siguiente retry del refresh proactivo lo
+            // intentara de nuevo. El TokenAuthenticator (que corre en
+            // paralelo por cada request) va a devolver un 401 al operador
+            // si el problema persiste, y ahi la UI va a mostrar el error
+            // concreto.
+            Result.failure(t)
+        }
+    }
+
+    /**
+     * **F56 (2026-08-17):** arranca la coroutine que chequea el timestamp
+     * de expiracion del JWT cada 60 segundos. Si esta a <5 min de expirar,
+     * llama a [refreshToken] preventivamente.
+     *
+     * Es idempotente: si ya hay un job corriendo, lo reemplaza. Llamar
+     * multiples veces es seguro.
+     */
+    fun startProactiveRefresh() {
+        stopProactiveRefresh()
+        proactiveRefreshJob = scope.launch {
+            while (true) {
+                try {
+                    val expiresAt = authStore.getTokenExpiresAt()
+                    val now = System.currentTimeMillis()
+                    val shouldRefresh = expiresAt != null &&
+                        expiresAt - now <= PROACTIVE_REFRESH_LEAD_MS
+                    if (shouldRefresh) {
+                        // refreshToken() es suspend. Si falla, el job sigue
+                        // vivo y reintenta en el proximo tick (60s).
+                        refreshToken()
+                    }
+                } catch (_: Throwable) {
+                    // Cualquier excepcion (incluyendo CancellationException
+                    // cuando stopProactiveRefresh cancela el job) NO debe
+                    // matar la coroutine. El try/catch ya absorbe, y el
+                    // while(true) sigue.
+                }
+                delay(PROACTIVE_REFRESH_TICK_MS)
+            }
+        }
+    }
+
+    /**
+     * **F56 (2026-08-17):** cancela la coroutine del refresh proactivo.
+     * Llamado por [logout] y al destruir el repositorio (no tenemos
+     * destructor explicito porque el repos vive lo que vive el proceso).
+     */
+    fun stopProactiveRefresh() {
+        proactiveRefreshJob?.cancel()
+        proactiveRefreshJob = null
+    }
+
+    /**
+     * **F56 (2026-08-17):** emite [SessionExpiredEvent] y limpia la sesion
+     * (DataStore + cache de JWT). Usado por [refreshToken] cuando el
+     * backend rechaza el refresh, y por el [TokenAuthenticator] cuando
+     * el reintento post-refresh tambien falla.
+     *
+     * Es `private` porque solo este repo debe poder dispararlo (asi
+     * mantenemos el acoplamiento bajo y la UI sigue siendo reactiva al
+     * SharedFlow publico).
+     */
+    private suspend fun emitSessionExpired() {
+        // Intentar emitir; si no hay collector, el buffer (16) aguanta.
+        _sessionExpired.emit(Unit)
+        // Limpiar estado local para que la UI que observe `isLoggedIn`
+        // tambien reaccione y muestre el Login. NO usamos `logout()` que
+        // ademas limpia caches de sucursales — el operador probablemente
+        // va a re-loguearse inmediatamente y queremos que el re-login
+        // baje la lista de sucursales de nuevo.
+        authStore.clear()
+        jwtCache = null
+    }
+
+    /**
+     * **F56 (2026-08-17):** lee el email persistido en DataStore. Lo usa
+     * el [cl.csae.pos.ui.screens.LoginScreen] para pre-llenar el campo
+     * "Usuario" cuando la sesion expiro (asi el operador solo tiene que
+     * escribir el password).
+     */
+    suspend fun getLastEmail(): String? = authStore.email.first()
+
+    /**
+     * **F56 (2026-08-17):** parsea un `expiresAt` ISO 8601 (formato
+     * `2026-08-17T23:59:59Z` o `2026-08-17T23:59:59+00:00`) a millis Unix.
+     * Devuelve `null` si el string esta vacio o no se puede parsear.
+     *
+     * Usa `java.time.Instant` (API 26+, nuestro `minSdk = 26`) asi que
+     * no necesita desugaring ni ThreeTenABP.
+     */
+    private fun parseExpiresAtToMillis(expiresAt: String?): Long? {
+        if (expiresAt.isNullOrBlank()) return null
+        return try {
+            Instant.parse(expiresAt).toEpochMilli()
+        } catch (_: DateTimeParseException) {
+            null
+        }
+    }
+
     private fun parseError(errorBody: String?, code: Int): String {
         if (errorBody.isNullOrBlank()) return "Error $code"
         return try {
@@ -384,5 +620,16 @@ class AuthRepository(
         } catch (e: Exception) {
             "Error $code"
         }
+    }
+
+    private companion object {
+        // F56: ventana de "refresca ya" antes de la expiracion. 5 min es
+        // suficiente para que el round-trip al backend (~100-300ms) termine
+        // antes de que el JWT actual se vuelva inutilizable.
+        const val PROACTIVE_REFRESH_LEAD_MS: Long = 5 * 60 * 1000L
+        // F56: cada cuanto la coroutine proactiva chequea el timestamp.
+        // 60s = balance entre precision y overhead (un read a DataStore por
+        // minuto es despreciable).
+        const val PROACTIVE_REFRESH_TICK_MS: Long = 60 * 1000L
     }
 }
