@@ -36,6 +36,8 @@ import cl.csae.pos.di.ServiceLocator
 import cl.csae.pos.model.Ticket
 import cl.csae.pos.ui.components.CambiarModoTopBar
 import cl.csae.pos.ui.components.CasinoLogoImage
+import cl.csae.pos.ui.components.formatRutForDisplay
+import cl.csae.pos.util.FormatUtil
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
@@ -385,7 +387,7 @@ fun TicketScreen(
                         color = Color.Black,
                     )
                     Text(
-                        "RUT: ${ticket.comensal.rut}",
+                        "RUT: ${formatRutForDisplay(ticket.comensal.rut.replace(".", "").replace("-", "").uppercase())}",
                         fontFamily = FontFamily.Monospace,
                         fontSize = 12.sp,
                         color = Color.Black,
@@ -427,7 +429,7 @@ fun TicketScreen(
                         )
                         val precioFinal = ticket.precio.takeIf { it > 0 } ?: ticket.servicio.precio
                         Text(
-                            "$$precioFinal",
+                            "$${FormatUtil.formatClp(precioFinal)}",
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.ExtraBold,
                             fontSize = 18.sp,

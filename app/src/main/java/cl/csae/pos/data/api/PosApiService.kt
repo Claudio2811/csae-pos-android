@@ -137,9 +137,16 @@ interface PosApiService {
      *   que el operador elija manualmente si el reconciliador no matcheo.
      *
      * `incluirInactivos=false` (default) filtra los soft-deleted.
+     *
+     * **F60 (2026-08-18):** `sucursalId` opcional. Si el operador trabaja
+     * en una sucursal especifica, el backend filtra para que NO vea
+     * dispositivos de otras sucursales del mismo casino. Si llega null
+     * (AdminRestaurante sin sucursalId en el JWT, o admin), el backend
+     * devuelve todos.
      */
     @GET("api/v1/dispositivos-pos")
     suspend fun listarDispositivos(
         @Query("incluirInactivos") incluirInactivos: Boolean = false,
+        @Query("sucursalId") sucursalId: String? = null,
     ): Response<List<DispositivoPosDto>>
 }

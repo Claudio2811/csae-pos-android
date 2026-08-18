@@ -54,9 +54,9 @@ android {
         //   de `buscarComensal` (que usaba cache local).
         // - ConsumoRepository.kt: despues de un consumo OK, refresca el
         //   cache del comensal via el endpoint nuevo.
-        versionCode = 27
+        versionCode = 28
         // F55c: auto-imprimir tambien en modo Totem (kiosko).
-        versionName = "0.9.15-f56-auth-refresh"
+        versionName = "0.9.16-f60-device-rut-clp"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
         // URL del API configurable por buildType.

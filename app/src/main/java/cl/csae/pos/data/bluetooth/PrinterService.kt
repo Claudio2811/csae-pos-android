@@ -11,6 +11,8 @@ import android.graphics.Color
 import android.os.Build
 import android.util.Log
 import cl.csae.pos.model.Ticket
+import cl.csae.pos.ui.components.formatRutForDisplay
+import cl.csae.pos.util.FormatUtil
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
@@ -309,7 +311,11 @@ class PrinterService(private val context: Context) {
         list.add("Ticket: ${ticket.numero}\n".toByteArray(Charsets.UTF_8))
         list.add("--------------------------------\n".toByteArray(Charsets.UTF_8))
         list.add("Comensal: ${ticket.comensal.nombre} ${ticket.comensal.apellido ?: ""}\n".toByteArray(Charsets.UTF_8))
-        list.add("RUT: ${ticket.comensal.rut}\n".toByteArray(Charsets.UTF_8))
+        // F60 (2026-08-18): formatear RUT con puntos y guion para
+        // que sea legible en el ticket fisico (12.345.678-9 en
+        // vez de 12345678-9). El backend lo manda sin formato.
+        val rutFmt = formatRutForDisplay(ticket.comensal.rut.replace(".", "").replace("-", "").uppercase())
+        list.add("RUT: $rutFmt\n".toByteArray(Charsets.UTF_8))
         if (ticket.comensal.empresa.isNotEmpty()) {
             list.add("Empresa: ${ticket.comensal.empresa}\n".toByteArray(Charsets.UTF_8))
         }
@@ -318,7 +324,11 @@ class PrinterService(private val context: Context) {
         list.add("Tipo: ${ticket.servicio.tipo}\n".toByteArray(Charsets.UTF_8))
         // Precio en grande
         list.add(escCharSize(0x11))
-        list.add("Precio: $${ticket.precio.takeIf { it > 0 } ?: ticket.servicio.precio}\n".toByteArray(Charsets.UTF_8))
+        // F60 (2026-08-18): precio formateado en CLP con separador de
+        // miles. Antes era "$1234" (pegado, sin formato), ahora
+        // "$1.234" (CLP locale es-CL).
+        val precioFmt = FormatUtil.formatClp(ticket.precio.takeIf { it > 0 } ?: ticket.servicio.precio)
+        list.add("Precio: $$precioFmt\n".toByteArray(Charsets.UTF_8))
         list.add(escCharSize(0x00))
         list.add("--------------------------------\n".toByteArray(Charsets.UTF_8))
         list.add("Operador: ${ticket.operador}\n".toByteArray(Charsets.UTF_8))

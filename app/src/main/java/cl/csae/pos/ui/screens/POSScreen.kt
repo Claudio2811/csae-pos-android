@@ -35,6 +35,8 @@ import cl.csae.pos.ui.components.CambiarModoTopBar
 import cl.csae.pos.ui.components.NumericKeypad
 import cl.csae.pos.ui.components.RutInputField
 import cl.csae.pos.ui.components.normalizeRutInput
+import cl.csae.pos.ui.components.formatRutForDisplay
+import cl.csae.pos.util.FormatUtil
 import kotlinx.coroutines.launch
 
 /**
@@ -392,7 +394,7 @@ private fun ComensalCardPOS(c: Comensal) {
                     maxLines = 1,
                 )
                 Text(
-                    "RUT ${c.rut}",
+                    "RUT ${formatRutForDisplay(c.rut.replace(".", "").replace("-", "").uppercase())}",
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
                 )
@@ -493,7 +495,7 @@ private fun ServicioCardPOS(servicio: Servicio, seleccionado: Boolean, onClick: 
                     )
                 }
                 servicio.precio > 0 -> Text(
-                    "$${servicio.precio}",
+                    "$${FormatUtil.formatClp(servicio.precio)}",
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,

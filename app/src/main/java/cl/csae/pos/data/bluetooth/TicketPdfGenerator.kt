@@ -11,6 +11,8 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import cl.csae.pos.model.Ticket
+import cl.csae.pos.ui.components.formatRutForDisplay
+import cl.csae.pos.util.FormatUtil
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -119,7 +121,7 @@ object TicketPdfGenerator {
         y += 14f
         canvas.drawText(comensalFull, MARGIN, y, valuePaint)
         y += 14f
-        canvas.drawText("RUT: ${ticket.comensal.rut}", MARGIN, y, infoPaint)
+        canvas.drawText("RUT: ${formatRutForDisplay(ticket.comensal.rut.replace(".", "").replace("-", "").uppercase())}", MARGIN, y, infoPaint)
         y += 12f
         if (ticket.comensal.empresa.isNotEmpty()) {
             canvas.drawText("Empresa: ${ticket.comensal.empresa}", MARGIN, y, infoPaint)
@@ -138,7 +140,7 @@ object TicketPdfGenerator {
 
         // Precio
         val precio = ticket.precio.takeIf { it > 0 } ?: ticket.servicio.precio
-        canvas.drawText("Precio: $$precio CLP", cx, y, precioPaint)
+        canvas.drawText("Precio: $${FormatUtil.formatClp(precio)} CLP", cx, y, precioPaint)
         y += 22f
 
         canvas.drawLine(MARGIN, y, PAGE_WIDTH - MARGIN, y, linePaint)

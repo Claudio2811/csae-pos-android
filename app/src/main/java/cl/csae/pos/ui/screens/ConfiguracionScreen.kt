@@ -121,14 +121,20 @@ fun ConfiguracionScreen(
 
     // F19: cada vez que se abre el dialog, recarga la lista de dispositivos
     // del casino actual. Asi si el admin agrego uno nuevo, el operador lo ve.
+    // F60 (2026-08-18): filtramos por la sucursalId activa del operador
+    // para que NO vea dispositivos de otras sucursales del mismo casino.
     fun cargarDispositivos() {
         loadingDispositivos = true
         dispositivos = emptyList()
         scope.launch {
             try {
                 val restauranteId = ServiceLocator.authStore.restauranteId.firstOrNull()
-                android.util.Log.d("CsaeConfig", "GET /api/v1/dispositivos-pos?incluirInactivos=true (restauranteId del JWT=$restauranteId)")
-                val resp = ServiceLocator.posApiService.listarDispositivos(incluirInactivos = true)
+                val sucursalId = ServiceLocator.authStore.sucursalId.firstOrNull()
+                android.util.Log.d("CsaeConfig", "GET /api/v1/dispositivos-pos?incluirInactivos=true&sucursalId=$sucursalId (restauranteId del JWT=$restauranteId)")
+                val resp = ServiceLocator.posApiService.listarDispositivos(
+                    incluirInactivos = true,
+                    sucursalId = sucursalId,
+                )
                 android.util.Log.d("CsaeConfig", "  -> HTTP ${resp.code()}, body size=${resp.body()?.size ?: "null"}")
                 if (resp.isSuccessful) {
                     val raw = resp.body().orEmpty()

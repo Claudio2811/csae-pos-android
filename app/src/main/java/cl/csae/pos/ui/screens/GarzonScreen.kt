@@ -33,6 +33,7 @@ import cl.csae.pos.di.ServiceLocator
 import cl.csae.pos.model.UsuarioPos
 import cl.csae.pos.ui.components.CambiarModoTopBar
 import cl.csae.pos.ui.components.topBarColorsFor
+import cl.csae.pos.ui.components.formatRutForDisplay
 import com.google.mlkit.vision.barcode.BarcodeScannerOptions
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
@@ -355,7 +356,7 @@ private fun ResultadoValidacionDialog(
                 t?.let {
                     Spacer(Modifier.height(8.dp))
                     Text("Nombre: ${it.comensalNombre}", fontWeight = FontWeight.SemiBold)
-                    Text("RUT: ${it.comensalRut}")
+                    Text("RUT: ${formatRutForDisplay(it.comensalRut.replace(".", "").replace("-", "").uppercase())}")
                     Text("Servicio: ${it.servicioNombre}")
                     Text("N° ${it.numero}", style = MaterialTheme.typography.bodySmall)
                     if (!it.consumidoEnUtc.isNullOrBlank()) {

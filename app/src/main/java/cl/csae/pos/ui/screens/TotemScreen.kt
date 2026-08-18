@@ -30,6 +30,8 @@ import cl.csae.pos.ui.components.MinimalTopBar
 import cl.csae.pos.ui.components.NumericKeypad
 import cl.csae.pos.ui.components.RutInputField
 import cl.csae.pos.ui.components.normalizeRutInput
+import cl.csae.pos.ui.components.formatRutForDisplay
+import cl.csae.pos.util.FormatUtil
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -431,7 +433,7 @@ private fun SeleccionServicioStep(
                         maxLines = 1,
                     )
                     Text(
-                        "RUT ${comensal.rut} - ${comensal.empresa}",
+                        "RUT ${formatRutForDisplay(comensal.rut.replace(".", "").replace("-", "").uppercase())} - ${comensal.empresa}",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
                         maxLines = 1,
@@ -525,7 +527,7 @@ private fun ServicioCardTotem(s: Servicio, onSelect: (Servicio) -> Unit) {
                 }
             } else if (s.precio > 0) {
                 Text(
-                    "$${s.precio}",
+                    "$${FormatUtil.formatClp(s.precio)}",
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,
